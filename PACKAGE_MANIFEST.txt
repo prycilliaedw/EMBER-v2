@@ -1,0 +1,18 @@
+EMBER Laravel HSE-HBE FINAL PACKAGE
+
+Model version: EMBER-HSE-HBE-SUGENO-DRAFT-1.0.0
+All 13 detailed MapBiomas Landy classes remain active.
+
+Included core input data at storage/app/ember/source/:
+- EMBER_Hotspots_Enriched_Evidence_v2.csv
+- EMBER_Final_Evidence_13Classes_All13.csv
+- EMBER_HBE04_Recomputed_13Classes_FINAL.csv
+- EMBER_MapBiomas_Area_by_Province_and_Class_GAUL2025.csv
+- EMBER_AOI_10Provinsi_Sumatra_GAUL2025_v2.geojson
+- burned_coverage_2024.tif
+- fire_accumulated_2000_2024.tif
+- fire_frequency_2000_2024.tif
+- MapBiomas Fire Excel and class/province CSV summaries
+
+The archive intentionally excludes .env, local DB state, vendor, and node_modules.
+Follow README.md for installation, migration, admin seeding, and import.
