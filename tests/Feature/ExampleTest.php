@@ -89,6 +89,44 @@ class ExampleTest extends TestCase
             ->assertSee('Buka di OpenStreetMap');
     }
 
+    public function test_map_detail_evidence_uses_configured_scores_by_land_cover_id(): void
+    {
+        DB::table('titik_lokasi')->insert([
+            [
+                'desa' => 'Sawah',
+                'latitude' => -2.5,
+                'longitude' => 102.7,
+                'land_cover_id' => 40,
+                'land_cover' => 'Sawah',
+                'hotspot_evidence' => 0,
+                'historical_burn_evidence' => 0,
+                'fsi_score' => 42.5,
+            ],
+            [
+                'desa' => 'Mangrove',
+                'latitude' => -2.6,
+                'longitude' => 102.8,
+                'land_cover_id' => 5,
+                'land_cover' => 'Mangrove',
+                'hotspot_evidence' => 99,
+                'historical_burn_evidence' => 99,
+                'fsi_score' => 31.5,
+            ],
+        ]);
+
+        $response = $this->get('/map')->assertOk();
+        preg_match('/<script id="ember-map-data" type="application\/json">(.*?)<\/script>/s', $response->getContent(), $matches);
+        $mapData = json_decode($matches[1] ?? '', true, flags: JSON_THROW_ON_ERROR);
+        $locations = collect($mapData['locations'])->keyBy('land_cover_id');
+
+        $this->assertSame(44.87, $locations[40]['hotspot_evidence']);
+        $this->assertSame(55.473, $locations[40]['historical_burn_evidence']);
+        $this->assertSame(42.5, $locations[40]['fsi_score']);
+        $this->assertEquals(0.0, $locations[5]['hotspot_evidence']);
+        $this->assertSame(1.975, $locations[5]['historical_burn_evidence']);
+        $this->assertSame(31.5, $locations[5]['fsi_score']);
+    }
+
     public function test_map_language_switch_links_preserve_active_filter_query(): void
     {
         $this->get('/map?lang=id&year=2023&confidence=low%2Chigh&fsi=moderate&land_cover=Sawah')

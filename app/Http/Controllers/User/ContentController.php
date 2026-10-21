@@ -14,12 +14,13 @@ class ContentController extends Controller
     public function map(Request $request): View
     {
         $language = $this->language($request);
+        $classEvidence = config('ember.class_evidence', []);
         $locations = DB::table('titik_lokasi')
             ->whereNotNull('latitude')
             ->whereNotNull('longitude')
             ->orderBy('id')
             ->get()
-            ->map(function ($location) use ($language) {
+            ->map(function ($location) use ($language, $classEvidence) {
                 $location->detail_url = route('user.locations.show', [
                     'id' => $location->id,
                     'lang' => $language,
@@ -27,6 +28,15 @@ class ContentController extends Controller
 
                 $location->confidence_class = $this->confidenceClass($location->confidence);
                 $location->fsi_class = $location->fsi_class ?: null;
+
+                if ($location->land_cover_id !== null) {
+                    $evidence = $classEvidence[(int) $location->land_cover_id] ?? null;
+
+                    if (is_array($evidence)) {
+                        $location->hotspot_evidence = $evidence['hotspot_evidence'] ?? null;
+                        $location->historical_burn_evidence = $evidence['historical_burn_evidence'] ?? null;
+                    }
+                }
 
                 return $location;
             });
