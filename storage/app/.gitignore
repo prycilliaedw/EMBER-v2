@@ -1,4 +1,9 @@
 *
 !private/
 !public/
+!ember/
+ember/*
+!ember/output/
+ember/output/*
+!ember/output/ember_collection4_authoritative_crosswalk.csv
 !.gitignore

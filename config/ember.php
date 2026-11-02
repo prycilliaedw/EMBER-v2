@@ -7,6 +7,26 @@
 // The reconstructed HBE and all FSI scores are not probabilities and not production-validated.
 
 return [
+    'firms' => [
+        'api_key' => env('NASA_FIRMS_MAP_KEY'),
+        'base_url' => env('NASA_FIRMS_BASE_URL', 'https://firms.modaps.eosdis.nasa.gov/api'),
+        'timeout_seconds' => (int) env('NASA_FIRMS_TIMEOUT_SECONDS', 30),
+        'sources' => [
+            'VIIRS_NOAA20_NRT',
+            'VIIRS_NOAA21_NRT',
+            'VIIRS_SNPP_NRT',
+            'MODIS_NRT',
+        ],
+        'overlap_days' => (int) env('NASA_FIRMS_OVERLAP_DAYS', 2),
+        'schedule_hourly' => (bool) env('NASA_FIRMS_SCHEDULE_HOURLY', true),
+    ],
+    'mapbiomas' => [
+        'raster_path' => env('MAPBIOMAS_LAND_COVER_RASTER_PATH'),
+        'raster_directory' => env('MAPBIOMAS_LAND_COVER_RASTER_DIRECTORY', storage_path('app/ember/source/ember_mapbiomas_collection4')),
+        'gdal_locationinfo_executable' => env('GDALLOCATIONINFO_EXECUTABLE', 'gdallocationinfo'),
+        'gdal_timeout_seconds' => (int) env('GDALLOCATIONINFO_TIMEOUT_SECONDS', 10),
+        'python_executable' => env('MAPBIOMAS_PYTHON_EXECUTABLE', 'python')s,
+    ],
     'model_version' => 'EMBER-HSE-HBE-SUGENO-DRAFT-1.0.0',
     'model_status' => 'experimental',
     'model_status_note' => 'Historical Burn Evidence pra-2024 masih direkonstruksi dari raster frekuensi kumulatif dan mask terbakar 2024. Gunakan sebagai indeks relatif, bukan probabilitas kebakaran.',
