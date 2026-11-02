@@ -3,6 +3,7 @@
 namespace App\Livewire\User;
 
 use Illuminate\Support\Facades\DB;
+use App\Services\EmberStatisticsService;
 use Livewire\Component;
 
 class Dashboard extends Component
@@ -20,25 +21,33 @@ class Dashboard extends Component
                 'longitude',
                 'date',
                 'confidence',
+                'is_nrt',
+                'data_source',
+                'classification_status',
+                'land_cover_id',
+                'land_cover',
             ])
             ->whereNotNull('latitude')
             ->whereNotNull('longitude')
             ->orderBy('id')
             ->get();
 
+        $language = request()->query('lang') === 'en' ? 'en' : 'id';
+        $spatial = app(EmberStatisticsService::class)->spatialDataset($locations, $language)['composition'];
+        $latestLocations = $locations->filter(function ($location) {
+            $village = strtolower(trim((string) $location->desa));
+
+            return $village !== '' && ! in_array($village, ['desa belum tersedia', 'village not available', 'unknown village'], true);
+        })->sortByDesc('date')->take(4)->values();
+
         return view('livewire.user.dashboard', [
             'locations' => $locations,
-            'totalLocations' => $locations->count(),
-            'totalWarnings' => $locations->whereNotNull('confidence')->count(),
-            'latestLocations' => $locations->sortByDesc('date')->take(4)->values(),
+            'totalLocations' => $spatial['total'],
+            'totalWarnings' => $spatial['mapped_total'],
+            'latestLocations' => $latestLocations,
             'latestDate' => $locations->pluck('date')->filter()->max(),
-            'highWarnings' => $locations->filter(function ($location) {
-                $confidence = strtolower(trim((string) $location->confidence));
-
-                return in_array($confidence, ['high', 'tinggi'], true)
-                    || (is_numeric($confidence) && (float) $confidence >= 80);
-            })->count(),
-            'language' => request()->query('lang') === 'en' ? 'en' : 'id',
+            'highWarnings' => $spatial['confidence_counts']['high'] ?? 0,
+            'language' => $language,
         ]);
     }
 }

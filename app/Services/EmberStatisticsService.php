@@ -27,6 +27,7 @@ final class EmberStatisticsService
         'Hutan Rawa Gambut' => 'Peat Swamp Forest',
         'Kebun Kayu' => 'Wood Plantation',
         'Lubang Tambang' => 'Mining Pits',
+        'Mangrove' => 'Mangrove',
         'Non-Vegetasi Lainnya' => 'Other Non-Vegetated Areas',
         'Pemukiman' => 'Settlement',
         'Pertanian Lainnya' => 'Other Agriculture',
@@ -40,9 +41,12 @@ final class EmberStatisticsService
     public function classDefinitions(string $language = 'id'): Collection
     {
         $susceptibility = app(FireSusceptibilityService::class);
+        $approvedIds = array_keys(FireSusceptibilityService::LAND_COVER_NAMES);
+        $evidenceById = config('ember.class_evidence', []);
 
-        return collect(config('ember.class_evidence', []))
-            ->map(function (array $evidence, int|string $id) use ($language, $susceptibility) {
+        return collect($approvedIds)
+            ->map(function (int $id) use ($language, $susceptibility, $evidenceById) {
+                $evidence = is_array($evidenceById[$id] ?? null) ? $evidenceById[$id] : [];
                 $hotspotEvidence = isset($evidence['hotspot_evidence'])
                     ? (float) $evidence['hotspot_evidence']
                     : null;
@@ -51,6 +55,7 @@ final class EmberStatisticsService
                     : null;
                 $fsi = $susceptibility->fsi($hotspotEvidence, $historicalEvidence);
                 $fsiClass = $susceptibility->fsiClass($fsi);
+                $contextFlag = $susceptibility->contextFlag($hotspotEvidence, $historicalEvidence);
                 $name = (string) ($evidence['name'] ?? 'Land cover');
 
                 return [
@@ -63,6 +68,7 @@ final class EmberStatisticsService
                     'hbe' => $historicalEvidence,
                     'fsi' => $fsi,
                     'fsi_class' => $fsiClass,
+                    'context_flag' => $contextFlag,
                     'fsi_class_label' => $language === 'en' ? $fsiClass : match ($fsiClass) {
                         'Very Low' => 'Sangat Rendah',
                         'Low' => 'Rendah',
@@ -128,8 +134,18 @@ final class EmberStatisticsService
 
         return [
             'total' => $filteredLocations->count(),
+            'georeferenced_total' => $filteredLocations->count(),
             'mapped_total' => $mappedTotal,
             'unclassified_total' => $filteredLocations->count() - $mappedTotal,
+            'stale_persisted_fsi_count' => $filteredLocations->filter(function ($location) {
+                if (! filled($location->land_cover_id ?? null)) {
+                    return false;
+                }
+
+                return ! filled($location->model_version ?? null)
+                    || $location->model_version !== config('ember.model_version');
+            })->count(),
+            'model_version' => (string) config('ember.model_version', ''),
             'confidence' => collect($confidenceCounts)->map(fn (int $count) => [
                 'count' => $count,
                 'share' => $confidenceTotal > 0 ? round(($count / $confidenceTotal) * 100, 2) : 0,
@@ -148,6 +164,276 @@ final class EmberStatisticsService
                 ->unique()
                 ->sort()
                 ->values(),
+        ];
+    }
+
+    /**
+     * Aggregate the complete spatial dataset from its authoritative sources.
+     * Historical confidence comes from the enriched NASA source; candidates
+     * contribute only their crosswalked class, and database rows outside the
+     * historical set contribute only when their class is explicitly verified.
+     *
+     * @param array<int, array<string, mixed>> $candidatePoints
+     * @return array<string, mixed>
+     */
+    public function spatialDataset(Collection $databaseLocations, string $language = 'id'): array
+    {
+        $path = storage_path('app/ember/output/nrt_621_collection4_final_verified.csv');
+        $candidateData = ['points' => [], 'overlap_by_coordinate' => [], 'overlap_count' => 0];
+
+        if (is_file($path) && ($handle = fopen($path, 'r')) !== false) {
+            $headers = fgetcsv($handle, escape: '') ?: [];
+            $headers = array_map(fn ($header) => strtolower(trim((string) $header, "\" \t\n\r\0\x0B\xEF\xBB\xBF")), $headers);
+            $databaseCoordinates = [];
+            foreach ($databaseLocations as $location) {
+                $key = $this->coordinateKey((float) $location->latitude, (float) $location->longitude);
+                $layer = (bool) ($location->is_nrt ?? false)
+                    ? 'nrt'
+                    : (($location->data_source ?? null) === 'NASA FIRMS' ? 'historical' : 'legacy');
+                if (! isset($databaseCoordinates[$key]) || $layer === 'nrt') {
+                    $databaseCoordinates[$key] = $layer;
+                }
+            }
+
+            $points = [];
+            $overlapByCoordinate = [];
+            $seenCoordinates = [];
+            $matcher = app(MapBiomasSpatialMatcher::class);
+            $classEvidence = config('ember.class_evidence', []);
+
+            while (($values = fgetcsv($handle, escape: '')) !== false) {
+                if (count($values) !== count($headers)) {
+                    continue;
+                }
+                $row = array_combine($headers, $values);
+                if (! is_array($row) || ! is_numeric($row['latitude'] ?? null) || ! is_numeric($row['longitude'] ?? null)) {
+                    continue;
+                }
+                $latitude = (float) $row['latitude'];
+                $longitude = (float) $row['longitude'];
+                if (! is_finite($latitude) || ! is_finite($longitude) || $latitude < -90 || $latitude > 90 || $longitude < -180 || $longitude > 180) {
+                    continue;
+                }
+                $key = $this->coordinateKey($latitude, $longitude);
+                if (isset($seenCoordinates[$key])) {
+                    continue;
+                }
+                $seenCoordinates[$key] = true;
+
+                $rawClassId = filter_var($row['raw_class_id'] ?? null, FILTER_VALIDATE_INT);
+                $landCoverId = $rawClassId === false ? null : $matcher->mapRawClassId((int) $rawClassId);
+                $class = $landCoverId === null ? null : ($classEvidence[$landCoverId] ?? null);
+                $point = [
+                    'latitude' => $latitude,
+                    'longitude' => $longitude,
+                    'raw_mapbiomas_class_id' => $rawClassId === false ? null : (int) $rawClassId,
+                    'land_cover_id' => $landCoverId,
+                    'land_cover' => is_array($class) ? ($class['name'] ?? null) : null,
+                    'classification_status' => $landCoverId === null ? 'unmapped_candidate' : 'sampled_candidate',
+                    'coincident_with_database' => isset($databaseCoordinates[$key]),
+                    'coincident_layer' => $databaseCoordinates[$key] ?? null,
+                ];
+                $points[] = $point;
+                if ($point['coincident_with_database']) {
+                    $overlapByCoordinate[$key] = $point;
+                }
+            }
+            fclose($handle);
+
+            $candidateData = [
+                'points' => $points,
+                'overlap_by_coordinate' => $overlapByCoordinate,
+                'overlap_count' => count($overlapByCoordinate),
+            ];
+        }
+
+        return [
+            'candidate_data' => $candidateData,
+            'composition' => $this->uniqueSpatialDataset($databaseLocations, $candidateData['points'], $language),
+        ];
+    }
+
+    public function coordinateKey(float $latitude, float $longitude): string
+    {
+        return number_format($latitude, 8, '.', '').'|'.number_format($longitude, 8, '.', '');
+    }
+
+    private function uniqueSpatialDataset(Collection $databaseLocations, array $candidatePoints, string $language = 'id'): array
+    {
+        $definitions = $this->classDefinitions($language);
+        $approvedIds = $definitions->pluck('id')->all();
+        $classCounts = array_fill_keys($approvedIds, 0);
+        $classConfidence = array_fill_keys($approvedIds, ['high' => 0, 'nominal' => 0, 'low' => 0, 'unrated' => 0]);
+        $confidenceCounts = ['high' => 0, 'nominal' => 0, 'low' => 0, 'unrated' => 0];
+        $confidenceRecords = [];
+        $unresolvedPoints = [];
+        $historicalCount = 0;
+        $seenHistorical = [];
+        $historicalPath = storage_path('app/ember/source/EMBER_Hotspots_Enriched_Evidence_v2.csv');
+
+        if (is_file($historicalPath) && ($handle = fopen($historicalPath, 'r')) !== false) {
+            $headers = fgetcsv($handle, escape: '') ?: [];
+            $headers = array_map(fn ($header) => strtolower(trim((string) $header, "\" \t\n\r\0\x0B\xEF\xBB\xBF")), $headers);
+            $line = 1;
+
+            while (($values = fgetcsv($handle, escape: '')) !== false) {
+                $line++;
+                if (count($values) !== count($headers)) {
+                    continue;
+                }
+                $row = array_combine($headers, $values);
+                if (! is_array($row)) {
+                    continue;
+                }
+
+                $identity = implode('|', array_map(fn (string $key) => trim((string) ($row[$key] ?? '')), [
+                    'satellite', 'instrument', 'acq_date', 'acq_time', 'latitude', 'longitude',
+                ]));
+                if ($identity === '|||||' || isset($seenHistorical[$identity])) {
+                    if (isset($seenHistorical[$identity])) {
+                        continue;
+                    }
+                    $identity = 'source-row-'.$line;
+                }
+                $seenHistorical[$identity] = true;
+                $historicalCount++;
+
+                $mapbiomasId = filter_var($row['mapbiomas_id'] ?? null, FILTER_VALIDATE_INT);
+                $landCoverId = filter_var($row['land_cover_id'] ?? null, FILTER_VALIDATE_INT);
+                $classId = $mapbiomasId !== false && $landCoverId !== false && (int) $mapbiomasId === (int) $landCoverId
+                    ? (int) $landCoverId
+                    : null;
+                if ($classId !== null && in_array($classId, $approvedIds, true)) {
+                    $classCounts[$classId]++;
+                } else {
+                    $unresolvedPoints[] = [
+                        'source' => 'historical_source',
+                        'row' => $line,
+                        'latitude' => $row['latitude'] ?? null,
+                        'longitude' => $row['longitude'] ?? null,
+                        'reason' => 'Historical source class IDs are missing, inconsistent, or not approved.',
+                    ];
+                }
+
+                $confidence = trim((string) ($row['confidence'] ?? ''));
+                if ($confidence !== '') {
+                    $key = $this->confidenceKey($confidence);
+                    $confidenceCounts[$key]++;
+                    if ($classId !== null && in_array($classId, $approvedIds, true)) {
+                        $classConfidence[$classId][$key]++;
+                    }
+                    $confidenceRecords[] = [
+                        'date' => $row['acq_date'] ?? null,
+                        'confidence_key' => $key,
+                    ];
+                }
+            }
+            fclose($handle);
+        }
+
+        $nonHistoricalDatabaseCount = 0;
+        foreach ($databaseLocations as $location) {
+            $isNrt = (bool) ($location->is_nrt ?? false);
+            $isHistorical = ! $isNrt && ($location->data_source ?? null) === 'NASA FIRMS';
+            if ($isHistorical) {
+                continue;
+            }
+            $nonHistoricalDatabaseCount++;
+
+            $classId = strtolower(trim((string) ($location->classification_status ?? ''))) === 'classified'
+                ? (int) ($location->land_cover_id ?? 0)
+                : 0;
+            if (in_array($classId, $approvedIds, true)) {
+                $classCounts[$classId]++;
+            } else {
+                $unresolvedPoints[] = [
+                    'source' => $isNrt ? 'nrt_database' : 'legacy_database',
+                    'id' => $location->id ?? null,
+                    'latitude' => $location->latitude ?? null,
+                    'longitude' => $location->longitude ?? null,
+                    'stored_land_cover_id' => $location->land_cover_id ?? null,
+                    'classification_status' => $location->classification_status ?? null,
+                    'reason' => 'The database record has no verified approved class assignment.',
+                ];
+            }
+
+            $confidence = trim((string) ($location->confidence ?? ''));
+            if ($isNrt && $confidence !== '') {
+                $key = $this->confidenceKey($confidence);
+                $confidenceCounts[$key]++;
+                if (in_array($classId, $approvedIds, true)) {
+                    $classConfidence[$classId][$key]++;
+                }
+                $confidenceRecords[] = [
+                    'date' => $location->date ?? null,
+                    'confidence_key' => $key,
+                ];
+            }
+        }
+
+        $candidateOverlapCount = 0;
+        $candidateAdditionalCount = 0;
+        foreach ($candidatePoints as $candidate) {
+            if ((bool) ($candidate['coincident_with_database'] ?? false)) {
+                $candidateOverlapCount++;
+                continue;
+            }
+            $candidateAdditionalCount++;
+            $classId = filter_var($candidate['land_cover_id'] ?? null, FILTER_VALIDATE_INT);
+            if ($classId !== false && in_array((int) $classId, $approvedIds, true)) {
+                $classCounts[(int) $classId]++;
+            } else {
+                $unresolvedPoints[] = [
+                    'source' => 'collection4_candidate',
+                    'id' => null,
+                    'latitude' => $candidate['latitude'] ?? null,
+                    'longitude' => $candidate['longitude'] ?? null,
+                    'raw_mapbiomas_class_id' => $candidate['raw_mapbiomas_class_id'] ?? null,
+                    'reason' => 'The candidate raw class has no approved EMBER mapping.',
+                ];
+            }
+        }
+
+        $uniqueTotal = $historicalCount + $nonHistoricalDatabaseCount + $candidateAdditionalCount;
+        $mappedTotal = array_sum($classCounts);
+        $classes = $definitions->map(function (array $definition) use ($classCounts, $classConfidence, $mappedTotal, $uniqueTotal) {
+            $id = $definition['id'];
+            $confidenceByClass = $classConfidence[$id];
+            $classConfidenceTotal = $confidenceByClass['high'] + $confidenceByClass['nominal'] + $confidenceByClass['low'];
+
+            return [
+                ...$definition,
+                'count' => $classCounts[$id],
+                'share' => $uniqueTotal > 0 ? round(($classCounts[$id] / $uniqueTotal) * 100, 2) : 0,
+                'confidence' => collect($confidenceByClass)->map(fn (int $count) => [
+                    'count' => $count,
+                    'share' => $classConfidenceTotal > 0 ? round(($count / $classConfidenceTotal) * 100, 1) : 0,
+                ])->all(),
+            ];
+        })->values();
+        $confidenceTotal = array_sum($confidenceCounts);
+        $confidenceCategoryCounts = array_intersect_key($confidenceCounts, array_flip(['high', 'nominal', 'low']));
+        $confidenceCategoryTotal = array_sum($confidenceCategoryCounts);
+
+        return [
+            'total' => $uniqueTotal,
+            'mapped_total' => $mappedTotal,
+            'unclassified_total' => $uniqueTotal - $mappedTotal,
+            'classes' => $classes,
+            'confidence' => collect($confidenceCategoryCounts)->map(fn (int $count) => [
+                'count' => $count,
+                'share' => $confidenceCategoryTotal > 0 ? round(($count / $confidenceCategoryTotal) * 100, 2) : 0,
+            ])->all(),
+            'confidence_total' => $confidenceTotal,
+            'confidence_category_total' => $confidenceCategoryTotal,
+            'confidence_unrated_total' => $confidenceCounts['unrated'],
+            'confidence_counts' => $confidenceCategoryCounts,
+            'confidence_records' => $confidenceRecords,
+            'candidate_overlap_count' => $candidateOverlapCount,
+            'candidate_additional_count' => $candidateAdditionalCount,
+            'historical_total' => $historicalCount,
+            'nonhistorical_database_total' => $nonHistoricalDatabaseCount,
+            'unresolved_points' => $unresolvedPoints,
         ];
     }
 
@@ -223,6 +509,10 @@ final class EmberStatisticsService
 
     private function classId(object $location, Collection $definitions): ?int
     {
+        if (strtolower(trim((string) ($location->classification_status ?? ''))) !== 'classified') {
+            return null;
+        }
+
         if (isset($location->land_cover_id) && $location->land_cover_id !== null) {
             $id = (int) $location->land_cover_id;
 

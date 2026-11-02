@@ -27,13 +27,19 @@ Aplikasi untuk melihat konteks tutupan lahan pada setiap hotspot NASA FIRMS/MODI
    npm run build
    ```
 
-6. Impor data hotspot sumber. Backup database dahulu. `--truncate` akan menghapus semua rekaman yang ada pada `titik_lokasi`, lalu menggantinya dengan data CSV ini:
+6. Validasi CSV dengan dry-run terlebih dahulu. Dry-run menampilkan jumlah baris valid/tidak valid, kecocokan yang sudah ada, rekaman baru, duplikasi di sumber, dan distribusi kelas tanpa menulis ke database:
 
    ```powershell
-   php artisan ember:import-hotspots "storage/app/ember/source/EMBER_Hotspots_Enriched_Evidence_v2.csv" --truncate
+   php artisan ember:import-hotspots "storage/app/ember/source/EMBER_Hotspots_Enriched_Evidence_v2.csv" --dry-run
    ```
 
-   Tanpa `--truncate`, data akan ditambahkan. Deduplikasi otomatis belum diterapkan.
+   Setelah hasil diperiksa dan backup database tersedia, jalankan impor tanpa opsi destruktif. Identitas FIRMS stabil dan impor berulang melewati rekaman yang sudah cocok:
+
+   ```powershell
+   php artisan ember:import-hotspots "storage/app/ember/source/EMBER_Hotspots_Enriched_Evidence_v2.csv"
+   ```
+
+   Baris tidak valid membatalkan impor secara atomik. Nama kelas disimpan pada kolom `land_cover` sesuai skema `titik_lokasi` saat ini.
 7. Jalankan aplikasi:
 
    ```powershell
@@ -52,6 +58,17 @@ Aplikasi untuk melihat konteks tutupan lahan pada setiap hotspot NASA FIRMS/MODI
 ## Data yang sudah disertakan
 
 Sumber tersedia di `storage/app/ember/source/`, termasuk CSV hotspot 33.209 baris, tabel evidence 13 kelas, luas kelas per provinsi, batas GeoJSON GAUL 2025 untuk 10 provinsi, workbook ringkasan, serta tiga raster MapBiomas Fire (`burned_coverage_2024.tif`, `fire_accumulated_2000_2024.tif`, `fire_frequency_2000_2024.tif`). Laravel tidak memproses ulang raster setiap request; skor yang dipakai runtime berada di `config/ember.php`.
+
+## Klasifikasi hotspot MapBiomas otomatis
+
+Hotspot baru NASA FIRMS diklasifikasi terhadap raster Collection 4 2024 pada koordinat latitude/longitude sebelum atau langsung saat persisten database. Rute ini memakai server raster Python persistent dan crosswalk EMBER yang berwenang. Dokumentasi operasional:
+
+- `docs/ember/MAPBIOMAS_PIPELINE_ARCHITECTURE.md`
+- `docs/ember/MAPBIOMAS_DATA_DICTIONARY.md`
+- `docs/ember/NASA_FIRMS_CLASSIFICATION_WORKFLOW.md`
+- `docs/ember/MAPBIOMAS_VALIDATION_REPORT.md`
+- `docs/ember/EMBER_OPERATIONS_RUNBOOK.md`
+- `docs/ember/MAPBIOMAS_TESTING_GUIDE.md`
 
 ## Pemeriksaan & debugging
 

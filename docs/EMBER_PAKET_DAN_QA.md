@@ -5,7 +5,7 @@
 - Laravel 13 application source; Livewire 4; Tailwind/Vite front-end source and existing compiled assets in `public/build/`.
 - Configuration and service for model draft `EMBER-HSE-HBE-SUGENO-DRAFT-1.0.0`.
 - Database migration adding `hotspot_evidence`, `historical_burn_evidence`, and `model_version` to `titik_lokasi`.
-- Artisan importer: `php artisan ember:import-hotspots <path> [--truncate] [--chunk=1000]`.
+- Artisan importer supports a read-only `--dry-run`, stable FIRMS identity matching, and transactional idempotent inserts.
 - All 13 detailed MapBiomas Landy classes active, including all values in `config/ember.php`.
 - Included source datasets under `storage/app/ember/source/`: 33,209 enriched hotspot records, 13-class evidence CSVs, area-by-province/class CSV, GAUL 2025 10-province GeoJSON, MapBiomas Fire workbook/summary CSVs, and three GeoTIFFs.
 - Full methodological/technical documentation in Markdown, DOCX and PDF.
@@ -29,10 +29,11 @@ php artisan db:seed --class=AdminUserSeeder
 npm run build
 ```
 
-4. Import source records. Back up the database first. `--truncate` deletes old `titik_lokasi` rows and replaces them; without it the command appends rows and does not deduplicate automatically.
+4. Run a read-only preview first, then back up the database and perform the idempotent append. Invalid rows abort the transaction; existing identities are skipped.
 
 ```powershell
-php artisan ember:import-hotspots "storage/app/ember/source/EMBER_Hotspots_Enriched_Evidence_v2.csv" --truncate
+php artisan ember:import-hotspots "storage/app/ember/source/EMBER_Hotspots_Enriched_Evidence_v2.csv" --dry-run
+php artisan ember:import-hotspots "storage/app/ember/source/EMBER_Hotspots_Enriched_Evidence_v2.csv"
 php artisan serve
 ```
 

@@ -11,7 +11,10 @@ import {
 
 const EmberMap = {
     map: null,
-    markerLayer: null,
+    markerLayers: {},
+    activeLayerKeys: new Set(['historical', 'candidates', 'legacy', 'nrt']),
+    candidates: [],
+    visibleDatabaseCoordinates: new Set(),
     boundaryLayers: [],
     boundaryHoverTooltip: null,
     boundaryHoverFrame: null,
@@ -196,8 +199,11 @@ const EmberMap = {
         this.map.getPane('boundaries').style.zIndex = '350';
         this.renderBoundaryLayers(payload.boundaryLayers || []);
 
-        this.markerLayer = L.layerGroup().addTo(this.map);
+        this.markerLayers = Object.fromEntries(['historical', 'candidates', 'legacy', 'nrt'].map((key) => [key, L.layerGroup()]));
+        this.candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+        this.initializeLayerControls();
         this.renderMarkers(locations, { fitView: true });
+        this.renderCandidateMarkers();
         this.initializeYearFilter();
         this.initializeStatusFilter();
         this.initializeBoundaryDrilldown();
@@ -295,7 +301,7 @@ const EmberMap = {
 
             this.rerenderBoundaryLayers();
             this.updateBoundaryDrilldownUi();
-            this.updateMapStatistics();
+            this.applyLocationFilters();
         });
 
         this.updateBoundaryDrilldownUi();
@@ -454,7 +460,7 @@ const EmberMap = {
 
         this.rerenderBoundaryLayers();
         this.updateBoundaryDrilldownUi();
-        this.updateMapStatistics();
+        this.applyLocationFilters();
 
         const levelOrder = ['province', 'regency', 'district', 'village'];
         const nextLevel = levelOrder[levelOrder.indexOf(level) + 1];
@@ -500,7 +506,7 @@ const EmberMap = {
         this.focusedLocationLabel = null;
         this.rerenderBoundaryLayers();
         this.updateBoundaryDrilldownUi();
-        this.updateMapStatistics();
+        this.applyLocationFilters();
         this.map.fitBounds([[-6.5, 94.5], [6.5, 106.5]], { padding: [36, 36], maxZoom: 6 });
     },
 
@@ -549,7 +555,8 @@ const EmberMap = {
     },
 
     renderMarkers(locations, { fitView = false } = {}) {
-        this.markerLayer.clearLayers();
+        Object.values(this.markerLayers).forEach((layer) => layer.clearLayers());
+        this.visibleDatabaseCoordinates = new Set();
 
         const bounds = [];
 
@@ -563,11 +570,19 @@ const EmberMap = {
 
             const confidence = location.confidence;
             const status = this.statusFor(confidence);
+            const layerKey = location.map_layer
+                || (Number(location.is_nrt) === 1 ? 'nrt' : (location.data_source === 'NASA FIRMS' ? 'historical' : 'legacy'));
+            if (this.activeLayerKeys.has(layerKey)) {
+                this.visibleDatabaseCoordinates.add(this.coordinateKey(latitude, longitude));
+            }
+            const isNrt = layerKey === 'nrt';
+            const isLegacy = layerKey === 'legacy';
             const marker = L.circleMarker([latitude, longitude], {
-                radius: 10,
-                color: '#ffffff',
-                weight: 3,
-                fillColor: status.color,
+                radius: isNrt ? 8 : 7,
+                color: isNrt ? '#2563eb' : (isLegacy ? '#475569' : '#ffffff'),
+                weight: isNrt || isLegacy ? 3 : 2,
+                dashArray: isNrt ? '2 2' : (isLegacy ? '1 3' : null),
+                fillColor: isLegacy ? '#64748b' : status.color,
                 fillOpacity: 1,
                 interactive: true,
                 bubblingMouseEvents: false,
@@ -580,11 +595,12 @@ const EmberMap = {
             const fsiText = Number.isFinite(Number(location.fsi_score))
                 ? ` · FSI ${Number(location.fsi_score).toFixed(1)}`
                 : '';
+            const sourceText = isNrt ? ` · ${this.language === 'en' ? 'NASA FIRMS NRT' : 'NASA FIRMS NRT'}` : '';
             marker.bindTooltip(
-                `${location.desa || (this.language === 'en' ? 'Location point' : 'Titik lokasi')}${fsiText} · ${this.language === 'en' ? 'Click for details' : 'Klik untuk detail'}`,
+                `${location.desa || (this.language === 'en' ? 'Location point' : 'Titik lokasi')}${fsiText}${sourceText} · ${this.language === 'en' ? 'Click for details' : 'Klik untuk detail'}`,
                 { direction: 'top', offset: [0, -8] },
             );
-            marker.addTo(this.markerLayer);
+            marker.addTo(this.markerLayers[layerKey] || this.markerLayers.historical);
             bounds.push([latitude, longitude]);
         });
 
@@ -592,7 +608,7 @@ const EmberMap = {
         const emptyElement = document.getElementById('map-filter-empty');
 
         if (countElement) {
-            countElement.textContent = `${locations.length} ${this.language === 'en' ? 'locations' : 'lokasi'}`;
+            countElement.textContent = `${locations.length} ${this.language === 'en' ? 'filtered database hotspot records' : 'record hotspot database terfilter'}`;
         }
 
         emptyElement?.classList.toggle('hidden', locations.length > 0);
@@ -613,6 +629,70 @@ const EmberMap = {
         } else if (fitView) {
             this.map.setView([-2.5, 118], 5);
         }
+    },
+
+    initializeLayerControls() {
+        const controls = Array.from(document.querySelectorAll('[data-map-layer]'));
+        this.activeLayerKeys = controls.length
+            ? new Set(controls.filter((control) => control.checked).map((control) => control.dataset.mapLayer))
+            : new Set(Object.keys(this.markerLayers));
+        Object.entries(this.markerLayers).forEach(([key, layer]) => {
+            if (this.activeLayerKeys.has(key)) layer.addTo(this.map);
+        });
+        controls.forEach((control) => {
+            control.addEventListener('change', () => {
+                const key = control.dataset.mapLayer;
+                const layer = this.markerLayers[key];
+                if (!layer) return;
+                if (control.checked) {
+                    this.activeLayerKeys.add(key);
+                    layer.addTo(this.map);
+                } else {
+                    this.activeLayerKeys.delete(key);
+                    this.map.removeLayer(layer);
+                }
+                this.applyLocationFilters();
+            });
+        });
+    },
+
+    renderCandidateMarkers() {
+        const layer = this.markerLayers.candidates;
+        if (!layer) return;
+        layer.clearLayers();
+        let shown = 0;
+        this.candidates.forEach((candidate) => {
+            const latitude = Number(candidate.latitude);
+            const longitude = Number(candidate.longitude);
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+            if (this.visibleDatabaseCoordinates.has(this.coordinateKey(latitude, longitude))) return;
+            const marker = L.circleMarker([latitude, longitude], {
+                radius: 6,
+                color: '#6d28d9',
+                weight: 2,
+                dashArray: '3 2',
+                fillColor: '#8b5cf6',
+                fillOpacity: 0.9,
+                interactive: true,
+                bubblingMouseEvents: false,
+            });
+            marker.bindTooltip(
+                this.language === 'en' ? 'Collection 4 sampled candidate · not a verified FIRMS event' : 'Kandidat sampel Collection 4 · bukan kejadian FIRMS terverifikasi',
+                { direction: 'top', offset: [0, -7] },
+            );
+            marker.on('click', () => this.showLocationDetail({ ...candidate, is_candidate: true }, {
+                label: this.language === 'en' ? 'Collection 4 sampled candidate' : 'Kandidat sampel Collection 4',
+                color: '#7c3aed',
+            }));
+            marker.addTo(layer);
+            shown += 1;
+        });
+        const count = document.getElementById('map-candidate-visible-count');
+        if (count) count.textContent = String(shown);
+    },
+
+    coordinateKey(latitude, longitude) {
+        return `${Number(latitude).toFixed(8)}|${Number(longitude).toFixed(8)}`;
     },
 
     focusLocationAtVillageLevel(location) {
@@ -639,7 +719,7 @@ const EmberMap = {
 
         this.rerenderBoundaryLayers();
         this.updateBoundaryDrilldownUi();
-        this.updateMapStatistics();
+        this.applyLocationFilters();
 
         const villageLayer = this.boundaryLayers.find(({ definition }) => definition.level === 'village');
         const targetZoom = villageLayer
@@ -863,6 +943,22 @@ const EmberMap = {
                     && String(location.date).slice(0, 4) === String(this.selectedYear)
                 );
 
+            const normalize = (value) => String(value || '')
+                .trim()
+                .toLocaleLowerCase('id-ID');
+
+            const matchesProvince = !this.boundarySelection.province
+                || normalize(location.provinsi) === normalize(this.boundarySelection.province);
+
+            const matchesRegency = !this.boundarySelection.regency
+                || normalize(location.kabupaten_kota) === normalize(this.boundarySelection.regency);
+
+            const matchesDistrict = !this.boundarySelection.district
+                || normalize(location.kecamatan) === normalize(this.boundarySelection.district);
+
+            const matchesVillage = !this.boundarySelection.village
+                || normalize(location.desa) === normalize(this.boundarySelection.village);
+
             const confidenceClass =
                 location.confidence_class ||
                 this.confidenceClass(location.confidence) ||
@@ -884,6 +980,10 @@ const EmberMap = {
                 && matchesConfidence
                 && matchesFsi
                 && matchesLandCover
+                && matchesProvince
+                && matchesRegency
+                && matchesDistrict
+                && matchesVillage
             );
         });
     },
@@ -899,6 +999,7 @@ const EmberMap = {
         this.renderMarkers(filteredLocations, {
             fitView: false,
         });
+        this.renderCandidateMarkers();
 
         this.updateMapStatistics();
 
@@ -946,9 +1047,6 @@ const EmberMap = {
                 color: '#047857',
             },
 
-            unrated: {
-                color: '#334155',
-            },
         };
 
         const normalizeRegion = (value) => {
@@ -994,13 +1092,16 @@ const EmberMap = {
          * - Rendah    = confidence < 30
          * - Belum dinilai = confidence tidak valid
          */
+        const confidenceLocations = filteredLocations.filter((location) =>
+            ['historical', 'nrt'].includes(location.map_layer)
+            && this.confidenceClass(location.confidence) !== 'unrated'
+        );
         const counts = Object.fromEntries(
             Object.keys(statusDefinitions).map((key) => [key, 0])
         );
 
-        filteredLocations.forEach((location) => {
-            const statusKey =
-                this.confidenceClass(location.confidence) || 'unrated';
+        confidenceLocations.forEach((location) => {
+            const statusKey = this.confidenceClass(location.confidence);
 
             if (Object.prototype.hasOwnProperty.call(counts, statusKey)) {
                 counts[statusKey] += 1;
@@ -1010,7 +1111,7 @@ const EmberMap = {
         /**
          * Total hotspot = jumlah data yang benar-benar lolos semua filter.
          */
-        const total = filteredLocations.length;
+        const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
 
         /**
          * Buat donut chart.
@@ -1095,7 +1196,6 @@ const EmberMap = {
                 high: 0,
                 nominal: 0,
                 low: 0,
-                unrated: 0,
             })
         );
 
@@ -1106,7 +1206,7 @@ const EmberMap = {
          * mengikuti filter tutupan lahan, FSI,
          * confidence, dan tahun.
          */
-        filteredLocations.forEach((location) => {
+        confidenceLocations.forEach((location) => {
             const month = Number(
                 String(location.date || '').slice(5, 7)
             );
@@ -1115,9 +1215,7 @@ const EmberMap = {
                 return;
             }
 
-            const statusKey =
-                this.confidenceClass(location.confidence)
-                || 'unrated';
+            const statusKey = this.confidenceClass(location.confidence);
 
             if (
                 Object.prototype.hasOwnProperty.call(
@@ -1234,21 +1332,33 @@ const EmberMap = {
         if (!root) return;
         const evidence = JSON.parse(root.dataset.classEvidence || '{}');
         const definitions = JSON.parse(root.dataset.classDistribution || '[]');
+        const showFullSpatialSet = this.selectedYear === 'all'
+            && !this.boundarySelection.province
+            && this.activeLandCover === 'all'
+            && this.activeConfidenceKeys.size === 4
+            && this.activeFsiKeys.size === 6;
         let filtered = this.getFilteredLocations();
         if (this.boundarySelection.province) {
             const province = String(this.boundarySelection.province).trim().toLocaleLowerCase('id-ID');
             filtered = filtered.filter((location) => String(location.provinsi || '').trim().toLocaleLowerCase('id-ID') === province);
         }
         const counts = Object.fromEntries(Object.keys(evidence).map((id) => [id, 0]));
-        filtered.forEach((location) => {
-            const id = location.land_cover_id == null ? null : String(location.land_cover_id);
-            if (id && Object.prototype.hasOwnProperty.call(counts, id)) counts[id] += 1;
-            else {
-                const match = Object.entries(evidence).find(([, item]) => item.name === location.land_cover);
-                if (match) counts[match[0]] += 1;
-            }
-        });
-        const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
+        if (showFullSpatialSet) {
+            definitions.forEach((item) => { counts[item.id] = Number(item.count || 0); });
+        } else {
+            filtered.forEach((location) => {
+                if (String(location.classification_status || '').toLowerCase() !== 'classified') return;
+                const id = location.land_cover_id == null ? null : String(location.land_cover_id);
+                if (id && Object.prototype.hasOwnProperty.call(counts, id)) counts[id] += 1;
+                else {
+                    const match = Object.entries(evidence).find(([, item]) => item.name === location.land_cover);
+                    if (match) counts[match[0]] += 1;
+                }
+            });
+        }
+        const total = showFullSpatialSet
+            ? Number(root.dataset.spatialTotal || 0)
+            : Object.values(counts).reduce((sum, value) => sum + value, 0);
         const formatter = new Intl.NumberFormat(this.language === 'en' ? 'en-US' : 'id-ID');
         const selected = this.activeLandCover !== 'all'
             ? definitions.find((item) => item.name === this.activeLandCover)
@@ -1277,6 +1387,7 @@ const EmberMap = {
             offset += share;
             return `${item.color} ${start}% ${offset}%`;
         });
+        if (showFullSpatialSet && offset < 100) stops.push(`#cbd5e1 ${offset}% 100%`);
         donut.style.background = total ? `conic-gradient(${stops.join(',')})` : '#e2e8f0';
         donut.setAttribute('aria-label', `${this.language === 'en' ? 'Hotspot distribution by land-cover class' : 'Distribusi hotspot per kelas tutupan lahan'} · ${formatter.format(total)} ${this.language === 'en' ? 'hotspots' : 'hotspot'}`);
         legend.replaceChildren();
@@ -1286,7 +1397,7 @@ const EmberMap = {
             const row = document.createElement('button');
             row.type = 'button';
             row.className = `flex items-center gap-1 rounded-sm px-1 text-left text-slate-700 ${selected?.id === item.id ? 'bg-red-50 ring-1 ring-red-200' : ''}`;
-            row.title = `${item.display_name || item.name}: ${formatter.format(count)} (${share.toFixed(1)}%) / ${formatter.format(total)}`;
+            row.title = `${item.display_name || item.name}: ${formatter.format(count)} (${share.toFixed(2)}%) / ${formatter.format(total)}`;
             const swatch = document.createElement('span');
             swatch.className = 'size-2 shrink-0 rounded-full';
             swatch.style.background = item.color;
@@ -1294,7 +1405,7 @@ const EmberMap = {
             name.className = 'min-w-0 flex-1 truncate';
             name.textContent = item.display_name || item.name;
             const value = document.createElement('strong');
-            value.textContent = `${formatter.format(count)} · ${share.toFixed(1)}%`;
+            value.textContent = `${formatter.format(count)} · ${share.toFixed(2)}%`;
             row.append(swatch, name, value);
             row.addEventListener('click', () => {
                 const filter = document.getElementById('map-land-cover-filter');
@@ -1452,13 +1563,18 @@ const EmberMap = {
             return;
         }
 
-        const fsiScore = Number(location.fsi_score);
-        const hotspotEvidence = Number(location.hotspot_evidence);
-        const historicalBurnEvidence = Number(location.historical_burn_evidence);
+        const numericOrNull = (value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))
+            ? Number(value)
+            : null;
+        const fsiScore = numericOrNull(location.fsi_score);
+        const hotspotEvidence = numericOrNull(location.hotspot_evidence);
+        const historicalBurnEvidence = numericOrNull(location.historical_burn_evidence);
+        const confidence = numericOrNull(location.confidence);
 
         const values = {
-            title: location.desa
-                || (this.language === 'en' ? 'Village not available' : 'Desa belum tersedia'),
+            title: location.is_candidate
+                ? (this.language === 'en' ? 'Collection 4 candidate point' : 'Titik kandidat Collection 4')
+                : (location.desa || (this.language === 'en' ? 'Village not available' : 'Desa belum tersedia')),
 
             region: [
                 location.kecamatan,
@@ -1466,13 +1582,15 @@ const EmberMap = {
                 location.provinsi,
             ].filter(Boolean).join(', ') || '-',
 
-            confidence: Number.isFinite(Number(location.confidence))
-                ? `${Number(location.confidence).toFixed(0)} / 100`
+            confidence: confidence !== null
+                ? `${confidence.toFixed(0)} / 100`
                 : '-',
 
-            status: status.label,
+            status: location.is_candidate
+                ? (this.language === 'en' ? 'Collection 4 sample; FIRMS event unverified' : 'Sampel Collection 4; kejadian FIRMS belum terverifikasi')
+                : status.label,
 
-            fsi: Number.isFinite(fsiScore)
+            fsi: fsiScore !== null
                 ? `${fsiScore.toFixed(1)} / 100`
                 : (this.language === 'en' ? 'Not assessed' : 'Belum dinilai'),
 
@@ -1498,13 +1616,19 @@ const EmberMap = {
                 }[fsiClass] || fsiClass;
             })(),
 
-            landCover: location.land_cover || '-',
+            landCover: location.is_candidate
+                ? (location.land_cover_id != null && location.land_cover
+                    ? `${location.land_cover_id} — ${location.land_cover}`
+                    : (this.language === 'en' ? `Unmapped raw class ${location.raw_mapbiomas_class_id ?? '-'}` : `Kelas raw ${location.raw_mapbiomas_class_id ?? '-'} belum terpetakan`))
+                : location.classification_status === 'classified'
+                    ? `${location.land_cover_id ?? ''}${location.land_cover_id != null && location.land_cover ? ' — ' : ''}${location.land_cover || (this.language === 'en' ? 'Classified' : 'Terklasifikasi')}`
+                    : (this.language === 'en' ? 'Classification pending' : 'Klasifikasi menunggu'),
 
-            hotspotEvidence: Number.isFinite(hotspotEvidence)
+            hotspotEvidence: hotspotEvidence !== null
                 ? `${hotspotEvidence.toFixed(1)} / 100`
                 : '-',
 
-            historicalBurnEvidence: Number.isFinite(historicalBurnEvidence)
+            historicalBurnEvidence: historicalBurnEvidence !== null
                 ? `${historicalBurnEvidence.toFixed(1)} / 100`
                 : '-',
 
@@ -1514,6 +1638,15 @@ const EmberMap = {
             village: location.desa || '-',
             date: this.formatDate(location.date),
             coordinates: `${location.latitude}, ${location.longitude}`,
+            source: location.is_candidate
+                ? (this.language === 'en' ? 'MapBiomas Collection 4 raster sample; not a verified FIRMS event' : 'Sampel raster MapBiomas Collection 4; bukan kejadian FIRMS terverifikasi')
+                : location.is_nrt
+                    ? `${location.source_product || 'NASA FIRMS'}${location.satellite ? ` · ${location.satellite}` : ''}`
+                    : location.map_layer === 'legacy'
+                        ? (this.language === 'en' ? 'Legacy database record' : 'Record lama database')
+                        : (this.language === 'en' ? 'Historical data' : 'Data historis'),
+            frp: numericOrNull(location.frp) !== null ? numericOrNull(location.frp).toFixed(2) : '-',
+            acquisition: location.acq_time !== null && location.acq_time !== undefined ? String(location.acq_time).padStart(4, '0') : '-',
         };
 
         Object.entries(values).forEach(([key, value]) => {
@@ -1526,8 +1659,22 @@ const EmberMap = {
 
         const link = document.getElementById('map-detail-link');
 
-        if (link && location.detail_url) {
-            link.href = location.detail_url;
+        if (link) {
+            link.hidden = !location.detail_url;
+            link.href = location.detail_url || '#';
+        }
+
+        const candidateNote = document.getElementById('map-detail-candidate-note');
+        if (candidateNote) {
+            const candidate = location.is_candidate ? location : location.collection4_candidate;
+            candidateNote.classList.toggle('hidden', !candidate);
+            candidateNote.textContent = !candidate ? '' : (location.is_candidate
+                ? (this.language === 'en'
+                    ? 'Collection 4 sampled candidate point; not a verified NASA FIRMS event. Acquisition date, time, confidence, and satellite are absent from this source.'
+                    : 'Titik kandidat sampel Collection 4; bukan kejadian NASA FIRMS terverifikasi. Tanggal, waktu akuisisi, confidence, dan satelit tidak tersedia pada sumber ini.')
+                : (this.language === 'en'
+                    ? `A Collection 4 candidate has the same coordinates (raw class ${candidate.raw_mapbiomas_class_id}, EMBER class ${candidate.land_cover_id ?? 'unmapped'}). Coordinate equality does not establish event identity.`
+                    : `Titik kandidat Collection 4 memiliki koordinat sama (kelas raw ${candidate.raw_mapbiomas_class_id}, kelas EMBER ${candidate.land_cover_id ?? 'tidak terpetakan'}). Kesamaan koordinat tidak membuktikan identitas kejadian.`));
         }
 
         const flagElement = document.getElementById('map-detail-contextFlag');

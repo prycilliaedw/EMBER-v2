@@ -5,149 +5,24 @@
 
 @section('content')
     @php
-        $availableYears = $locations
-            ->pluck('date')
-            ->filter()
-            ->map(fn ($date) => (int) substr($date, 0, 4))
-            ->unique()
-            ->sort()
-            ->values();
-
-        $classEvidenceData = collect(config('ember.class_evidence', []))->map(function ($evidence, $landCoverId) use ($locations, $language) {
-            $landCoverId = (int) $landCoverId;
-            $targetLocations = $locations->filter(function ($location) use ($landCoverId, $evidence) {
-                if (isset($location->land_cover_id) && $location->land_cover_id !== null) {
-                    return (int) $location->land_cover_id === $landCoverId;
-                }
-
-                return trim((string) ($location->land_cover ?? '')) === trim((string) ($evidence['name'] ?? ''));
-            });
-
-            $confidenceCounts = ['low' => 0, 'nominal' => 0, 'high' => 0, 'unrated' => 0];
-            foreach ($targetLocations as $location) {
-                $rawConfidence = $location->confidence ?? null;
-                if (! is_numeric($rawConfidence) && trim((string) $rawConfidence) === '') {
-                    $confidenceCounts['unrated'] += 1;
-                    continue;
-                }
-
-                $value = is_numeric($rawConfidence) ? (float) $rawConfidence : null;
-                if ($value === null) {
-                    continue;
-                }
-
-                $key = $value < 30 ? 'low' : ($value < 80 ? 'nominal' : 'high');
-                $confidenceCounts[$key] += 1;
-            }
-
-            $total = $targetLocations->count();
-            $hse = isset($evidence['hotspot_evidence']) ? (float) $evidence['hotspot_evidence'] : 0;
-            $hbe = isset($evidence['historical_burn_evidence']) ? (float) $evidence['historical_burn_evidence'] : 0;
-            $fsi = app(App\Services\FireSusceptibilityService::class)->fsi($hse, $hbe);
-
-            return [
-                'id' => $landCoverId,
-                'name' => $evidence['name'] ?? 'Land cover',
-                'display_name' => match ($evidence['name'] ?? '') {
-                    'Formasi Hutan' => $language === 'en' ? 'Forest Formation' : 'Formasi Hutan',
-                    'Hutan Rawa Gambut' => $language === 'en' ? 'Peat Swamp Forest' : 'Hutan Rawa Gambut',
-                    'Kebun Kayu' => $language === 'en' ? 'Wood Plantation' : 'Kebun Kayu',
-                    'Lubang Tambang' => $language === 'en' ? 'Mining Pits' : 'Lubang Tambang',
-                    'Non-Vegetasi Lainnya' => $language === 'en' ? 'Other Non-Vegetated Areas' : 'Non-Vegetasi Lainnya',
-                    'Pemukiman' => $language === 'en' ? 'Settlement' : 'Pemukiman',
-                    'Pertanian Lainnya' => $language === 'en' ? 'Other Agriculture' : 'Pertanian Lainnya',
-                    'Sawah' => $language === 'en' ? 'Rice Field' : 'Sawah',
-                    'Sawit' => $language === 'en' ? 'Oil Palm' : 'Sawit',
-                    'Sungai, Danau, Laut' => $language === 'en' ? 'River, Lake, Sea' : 'Sungai, Danau, Laut',
-                    'Tambak' => $language === 'en' ? 'Pond' : 'Tambak',
-                    'Tumbuhan Non-Hutan Lainnya' => $language === 'en' ? 'Other Non-Forest Vegetation' : 'Tumbuhan Non-Hutan Lainnya',
-                    default => $evidence['name'] ?? 'Land cover',
-                },
-                'area_km2' => isset($evidence['area_km2']) ? (float) $evidence['area_km2'] : null,
-                'count' => $total,
-                'total' => $total,
-                'confidence' => $confidenceCounts,
-                'confidence_percentages' => [
-                    'low' => $total > 0 ? round(($confidenceCounts['low'] / $total) * 100, 1) : 0,
-                    'nominal' => $total > 0 ? round(($confidenceCounts['nominal'] / $total) * 100, 1) : 0,
-                    'high' => $total > 0 ? round(($confidenceCounts['high'] / $total) * 100, 1) : 0,
-                    'unrated' => $total > 0 ? round(($confidenceCounts['unrated'] / $total) * 100, 1) : 0,
-                ],
-                'hse' => $hse,
-                'hbe' => $hbe,
-                'fsi' => $fsi,
-            ];
-        })->values();
-
-        $overallHotspotTotal = $classEvidenceData->sum('count');
-        $classDistribution = $classEvidenceData->map(function ($entry) use ($overallHotspotTotal) {
-            $share = $overallHotspotTotal > 0 ? round(($entry['count'] / $overallHotspotTotal) * 100, 2) : 0;
-
-            return [
-                'id' => $entry['id'],
-                'name' => $entry['name'],
-                'display_name' => $entry['display_name'],
-                'count' => $entry['count'],
-                'share' => $share,
-                'color' => match ($entry['name']) {
-                    'Formasi Hutan' => '#16a34a',
-                    'Mangrove' => '#0f766e',
-                    'Kebun Kayu' => '#84cc16',
-                    'Tumbuhan Non-Hutan Lainnya' => '#a3e635',
-                    'Pertanian Lainnya' => '#f59e0b',
-                    'Pemukiman' => '#f97316',
-                    'Non-Vegetasi Lainnya' => '#b45309',
-                    'Lubang Tambang' => '#374151',
-                    'Tambak' => '#38bdf8',
-                    'Sungai, Danau, Laut' => '#60a5fa',
-                    'Sawit' => '#22c55e',
-                    'Sawah' => '#facc15',
-                    'Hutan Rawa Gambut' => '#14532d',
-                    default => '#e2e8f0',
-                },
-            ];
-        })->values();
-
-        $donutGradient = 'conic-gradient(' . collect($classDistribution)->map(function ($item, $index) use ($classDistribution) {
-            $previous = collect($classDistribution)->take($index)->sum('share');
-
-            return sprintf('%s %s%% %s%%', $item['color'], $previous, $previous + $item['share']);
-        })->implode(', ') . ')';
-
-        $confidenceSummary = $locations
-            ->filter(fn ($location) => is_numeric($location->confidence ?? null) || trim((string) ($location->confidence ?? '')) === '')
-            ->map(function ($location) {
-                $confidence = $location->confidence ?? null;
-
-                if (! is_numeric($confidence)) {
-                    return 'unrated';
-                }
-
-                $value = (float) $confidence;
-
-                return $value < 30 ? 'low' : ($value < 80 ? 'nominal' : 'high');
-            })->countBy()->all();
-        $confidenceTotal = max(1, array_sum($confidenceSummary));
-        $confidenceDistribution = collect(['low', 'nominal', 'high', 'unrated'])->mapWithKeys(function ($key) use ($confidenceSummary, $confidenceTotal) {
-            $count = $confidenceSummary[$key] ?? 0;
-
-            return [$key => [
-                'count' => $count,
-                'share' => $confidenceTotal > 0 ? round(($count / $confidenceTotal) * 100, 1) : 0,
-            ]];
-        })->all();
-
-        $classEvidenceJson = $classEvidenceData->keyBy('id')->all();
-        $availableYears = $mapDashboard['years']->sort()->values();
-        $classEvidenceData = $mapDashboard['classes'];
-        $classDistribution = $classEvidenceData;
-        $classEvidenceJson = $classEvidenceData->keyBy('id')->all();
-    @endphp
+    $availableYears = $locations->pluck('date')->filter()->map(fn ($date) => (int) substr((string) $date, 0, 4))->unique()->sort()->values();
+    $classEvidenceData = $spatialDashboard['classes'];
+    $classDistribution = $classEvidenceData->map(fn (array $class) => [
+        'id' => $class['id'], 'name' => $class['name'], 'display_name' => $class['display_name'],
+        'count' => $class['count'], 'share' => $class['share'], 'color' => $class['color'],
+    ])->values();
+    $classEvidenceJson = $classEvidenceData->keyBy('id')->all();
+@endphp
 
     <section class="relative h-[calc(100vh-6.5rem)] min-h-150 w-full overflow-hidden bg-slate-100">
         <div class="absolute left-16 top-3 z-500 max-w-[calc(100%-5rem)] bg-white/95 px-4 py-3 shadow-xl ring-1 ring-slate-200 backdrop-blur sm:left-20 sm:top-5 sm:max-w-[calc(100%-6.25rem)] sm:px-5 sm:py-4">
             <p class="text-[10px] font-bold uppercase tracking-[0.18em] text-red-600">{{ $language === 'en' ? 'Interactive map' : 'Peta interaktif' }}</p>
             <h1 class="mt-1 text-lg font-bold tracking-tight text-slate-950 sm:text-xl">{{ $language === 'en' ? 'EMBER location distribution' : 'Persebaran lokasi EMBER' }}</h1>
+            <p class="mt-1 text-[10px] text-slate-600">
+                {{ $language === 'en' ? 'NASA FIRMS:' : 'NASA FIRMS:' }} {{ $latestSync ? ucfirst(str_replace('_', ' ', $latestSync->status)) : ($language === 'en' ? 'Not synchronized' : 'Belum sinkron') }}
+                {{ number_format($spatialTotal) }} {{ $language === 'en' ? 'unique spatial points' : 'titik spasial unik' }}
+                @if ($latestSync?->updated_at) · {{ \Illuminate\Support\Carbon::parse($latestSync->updated_at)->timezone(config('app.timezone'))->format('d M Y H:i T') }} @endif
+            </p>
         </div>
 
         <div id="map-drilldown-control" class="absolute right-3 top-24 z-500 w-[min(330px,calc(100%-1.5rem))] bg-white/95 p-4 shadow-xl ring-1 ring-slate-200 backdrop-blur sm:right-5 sm:top-5">
@@ -161,7 +36,7 @@
             </div>
         </div>
 
-        <section id="map-statistics-panel" data-hotspot-total="{{ $mapDashboard['total'] }}" data-classified-total="{{ $mapDashboard['mapped_total'] }}" class="absolute right-3 top-56 z-500 max-h-[calc(100%-15rem)] w-[min(320px,calc(100%-1.5rem))] overflow-y-auto bg-white/95 p-3 shadow-xl ring-1 ring-slate-200 backdrop-blur sm:right-5 sm:top-40 sm:max-h-[calc(100%-11rem)]" aria-label="{{ $language === 'en' ? 'Map statistics' : 'Statistik peta' }}">
+        <section id="map-statistics-panel" data-hotspot-total="{{ $spatialDashboard['total'] }}" data-classified-total="{{ $spatialDashboard['mapped_total'] }}" data-filtered-database-total="{{ $mapDashboard['total'] }}" class="absolute right-3 top-56 z-500 max-h-[calc(100%-15rem)] w-[min(320px,calc(100%-1.5rem))] overflow-y-auto bg-white/95 p-3 shadow-xl ring-1 ring-slate-200 backdrop-blur sm:right-5 sm:top-40 sm:max-h-[calc(100%-11rem)]" aria-label="{{ $language === 'en' ? 'Map statistics' : 'Statistik peta' }}">
             <div class="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
                 <div>
                     <p class="text-[9px] font-black uppercase tracking-[0.18em] text-red-700">{{ $language === 'en' ? 'Statistics dashboard · Status statistics' : 'Dasbor statistik · Statistik status' }}</p>
@@ -172,13 +47,13 @@
 
             <section id="map-confidence-statistics" class="border-b border-slate-200 py-3">
                 <h3 class="text-[9px] font-black uppercase tracking-[0.16em] text-red-700">{{ $language === 'en' ? '1. NASA confidence distribution' : '1. Distribusi confidence NASA' }}</h3>
-                <p class="mt-1 text-[9px] leading-4 text-slate-500">{{ $language === 'en' ? 'Hotspot confidence categories for the currently filtered locations.' : 'Kategori confidence hotspot pada lokasi yang sesuai filter saat ini.' }}</p>
+                <p class="mt-1 text-[9px] leading-4 text-slate-500">{{ $language === 'en' ? 'High, Nominal, and Low from filtered historical/NRT NASA records only. The center count is the classifiable Confidence denominator; candidate samples, legacy points, and the non-category NASA value are excluded.' : 'High, Nominal, dan Low hanya dari record NASA historis/NRT terfilter. Angka tengah adalah penyebut Confidence yang dapat dikategorikan; sampel kandidat, titik lama, dan nilai NASA di luar kategori dikecualikan.' }}</p>
             <div class="grid grid-cols-[112px_1fr] items-center gap-4 pt-3">
                 <div class="relative mx-auto size-28">
                     <div id="map-yearly-donut" class="absolute inset-0 rounded-full bg-slate-200" role="img" aria-label="{{ $language === 'en' ? 'Yearly status donut chart' : 'Grafik donat status tahunan' }}"></div>
                     <div class="absolute inset-[24%] flex flex-col items-center justify-center rounded-full bg-white shadow-inner">
                         <strong id="map-yearly-total" class="text-xl font-black text-slate-950">0</strong>
-                        <span class="text-[8px] font-black uppercase tracking-wider text-slate-400">{{ $language === 'en' ? 'locations' : 'lokasi' }}</span>
+                        <span class="text-[8px] font-black uppercase tracking-wider text-slate-400">{{ $language === 'en' ? 'classifiable values' : 'nilai berkategori' }}</span>
                     </div>
                 </div>
 
@@ -187,7 +62,6 @@
                         ['high', '#b91c1c', $language === 'en' ? 'High' : 'Tinggi'],
                         ['nominal', '#d97706', 'Nominal'],
                         ['low', '#047857', $language === 'en' ? 'Low' : 'Rendah'],
-                        ['unrated', '#334155', $language === 'en' ? 'Unrated' : 'Belum dinilai'],
                     ] as [$key, $color, $label])
                         <div class="flex items-center gap-2 text-[10px]">
                             <span class="size-2 shrink-0 rounded-full" style="background: {{ $color }}"></span>
@@ -219,7 +93,7 @@
                 </div>
             </div>
 
-            <div class="mt-4 border-t border-slate-200 pt-4" id="map-class-statistics" data-class-evidence="{{ json_encode($classEvidenceJson, JSON_HEX_APOS | JSON_HEX_QUOT) }}" data-class-distribution="{{ json_encode($classDistribution, JSON_HEX_APOS | JSON_HEX_QUOT) }}">
+            <div class="mt-4 border-t border-slate-200 pt-4" id="map-class-statistics" data-spatial-total="{{ $spatialDashboard['total'] }}" data-class-evidence="{{ json_encode($classEvidenceJson, JSON_HEX_APOS | JSON_HEX_QUOT) }}" data-class-distribution="{{ json_encode($classDistribution, JSON_HEX_APOS | JSON_HEX_QUOT) }}">
                 <div class="mb-3 flex items-center justify-between gap-3">
                     <h3 id="map-class-title" class="text-[9px] font-black uppercase tracking-[0.16em] text-red-700">{{ $language === 'en' ? '2. Hotspot distribution by land-cover class' : '2. Distribusi hotspot per kelas tutupan lahan' }}</h3>
                     <div class="flex items-center gap-2">
@@ -317,27 +191,8 @@
                         {{ $language === 'en' ? 'All land covers' : 'Semua tutupan lahan' }}
                     </option>
 
-                    @foreach (collect(config('ember.class_evidence', []))->pluck('name')->unique()->sort()->values() as $landCover)
-                        @php
-                            $landCoverLabel = match ($landCover) {
-                                'Formasi Hutan' => $language === 'en' ? 'Forest Formation' : 'Formasi Hutan',
-                                'Hutan Rawa Gambut' => $language === 'en' ? 'Peat Swamp Forest' : 'Hutan Rawa Gambut',
-                                'Kebun Kayu' => $language === 'en' ? 'Wood Plantation' : 'Kebun Kayu',
-                                'Lubang Tambang' => $language === 'en' ? 'Mining Pits' : 'Lubang Tambang',
-                                'Mangrove' => 'Mangrove',
-                                'Non-Vegetasi Lainnya' => $language === 'en' ? 'Other Non-Vegetated Areas' : 'Non-Vegetasi Lainnya',
-                                'Pemukiman' => $language === 'en' ? 'Settlement' : 'Pemukiman',
-                                'Pertanian Lainnya' => $language === 'en' ? 'Other Agriculture' : 'Pertanian Lainnya',
-                                'Sawah' => $language === 'en' ? 'Rice Field' : 'Sawah',
-                                'Sawit' => $language === 'en' ? 'Oil Palm' : 'Sawit',
-                                'Sungai, Danau, Laut' => $language === 'en' ? 'River, Lake, Sea' : 'Sungai, Danau, Laut',
-                                'Tambak' => $language === 'en' ? 'Pond' : 'Tambak',
-                                'Tumbuhan Non-Hutan Lainnya' => $language === 'en' ? 'Other Non-Forest Vegetation' : 'Tumbuhan Non-Hutan Lainnya',
-                                default => $landCover,
-                            };
-                        @endphp
-
-                        <option value="{{ $landCover }}">{{ $landCoverLabel }}</option>
+                    @foreach ($classEvidenceData as $class)
+                        <option value="{{ $class['name'] }}">{{ $class['display_name'] }}</option>
                     @endforeach
                 </select>
             </label>
@@ -372,7 +227,7 @@
                 <output id="map-year-output" class="map-year-slider-value" for="map-year-range" aria-live="polite">
                     <span id="map-year-label">{{ $language === 'en' ? 'All' : 'Semua' }}</span>
                     <span class="sr-only">, </span>
-                    <span id="map-result-count" class="sr-only">{{ $locations->count() }} {{ $language === 'en' ? 'locations' : 'lokasi' }}</span>
+                    <span id="map-result-count" class="sr-only">{{ $locations->count() }} {{ $language === 'en' ? 'filtered database hotspot records' : 'record hotspot database terfilter' }}</span>
                 </output>
             </div>
             <p class="mt-1 text-center text-[10px] font-bold text-slate-500">&larr; {{ $language === 'en' ? 'Drag to change year' : 'Geser untuk mengganti tahun' }} &rarr;</p>
@@ -451,14 +306,17 @@
                             -
                         </span>
                     </div>
+                    <p id="map-detail-candidate-note" class="mt-3 hidden border-l-2 border-violet-500 bg-violet-50 px-3 py-2 text-[10px] font-semibold text-violet-900"></p>
 
                     <dl class="mt-5 divide-y divide-slate-100 border-y border-slate-200">
                         @foreach (($language === 'en' ? [
                             'Province' => 'province', 'Regency/City' => 'regency', 'District' => 'district',
                             'Village' => 'village', 'Date' => 'date', 'Coordinates' => 'coordinates',
+                            'Data source' => 'source', 'FRP' => 'frp', 'Acquisition time' => 'acquisition',
                         ] : [
                             'Provinsi' => 'province', 'Kabupaten/Kota' => 'regency', 'Kecamatan' => 'district',
                             'Desa' => 'village', 'Tanggal' => 'date', 'Koordinat' => 'coordinates',
+                            'Sumber data' => 'source', 'FRP' => 'frp', 'Waktu akuisisi' => 'acquisition',
                         ]) as $label => $key)
                             <div class="grid grid-cols-[110px_1fr] gap-3 py-3.5">
                                 <dt class="text-xs font-semibold text-slate-400">{{ $label }}</dt>
@@ -474,7 +332,7 @@
                     </a>
                 </div>
             </aside>
-            <script id="ember-map-data" type="application/json">{!! json_encode(['language' => $language, 'locations' => $locations, 'boundaryLayers' => $boundaryLayers], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
+            <script id="ember-map-data" type="application/json">{!! json_encode(['language' => $language, 'locations' => $locations, 'candidates' => $collection4Candidates, 'boundaryLayers' => $boundaryLayers], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
         </div>
     </section>
 @endsection

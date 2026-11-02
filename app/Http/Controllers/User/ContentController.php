@@ -14,13 +14,13 @@ class ContentController extends Controller
     public function map(Request $request): View
     {
         $language = $this->language($request);
-        $classEvidence = config('ember.class_evidence', []);
+        $statistics = app(\App\Services\EmberStatisticsService::class);
         $locations = DB::table('titik_lokasi')
             ->whereNotNull('latitude')
             ->whereNotNull('longitude')
             ->orderBy('id')
             ->get()
-            ->map(function ($location) use ($language, $classEvidence) {
+            ->map(function ($location) use ($language) {
                 $location->detail_url = route('user.locations.show', [
                     'id' => $location->id,
                     'lang' => $language,
@@ -28,20 +28,21 @@ class ContentController extends Controller
 
                 $location->confidence_class = $this->confidenceClass($location->confidence);
                 $location->fsi_class = $location->fsi_class ?: null;
-
-                if ($location->land_cover_id !== null) {
-                    $evidence = $classEvidence[(int) $location->land_cover_id] ?? null;
-
-                    if (is_array($evidence)) {
-                        $location->hotspot_evidence = $evidence['hotspot_evidence'] ?? null;
-                        $location->historical_burn_evidence = $evidence['historical_burn_evidence'] ?? null;
-                    }
-                }
+                $location->map_layer = (bool) ($location->is_nrt ?? false)
+                    ? 'nrt'
+                    : (($location->data_source ?? null) === 'NASA FIRMS' ? 'historical' : 'legacy');
 
                 return $location;
             });
-        $mapDashboard = app(\App\Services\EmberStatisticsService::class)
-            ->dashboard($locations, $this->dashboardFilters($request), $language);
+        $spatialDataset = $statistics->spatialDataset($locations, $language);
+        $candidateData = $spatialDataset['candidate_data'];
+        foreach ($locations as $location) {
+            $key = $statistics->coordinateKey((float) $location->latitude, (float) $location->longitude);
+            if (isset($candidateData['overlap_by_coordinate'][$key])) {
+                $location->collection4_candidate = $candidateData['overlap_by_coordinate'][$key];
+            }
+        }
+        $mapDashboard = $statistics->dashboard($locations, $this->dashboardFilters($request), $language);
 
         $boundaryLayers = DB::table('geojson_layers')
             ->where('is_active', true)
@@ -60,7 +61,14 @@ class ContentController extends Controller
             'locations' => $locations,
             'boundaryLayers' => $boundaryLayers,
             'mapDashboard' => $mapDashboard,
+            'spatialDashboard' => $spatialDataset['composition'],
             'language' => $language,
+            'latestSync' => DB::table('firms_sync_runs')->orderByDesc('created_at')->first(),
+            'collection4Candidates' => $candidateData['points'],
+            'collection4CandidateCount' => count($candidateData['points']),
+            'collection4CandidateOverlapCount' => $candidateData['overlap_count'],
+            'collection4CandidateVisibleCount' => count($candidateData['points']) - $candidateData['overlap_count'],
+            'spatialTotal' => $spatialDataset['composition']['total'],
         ]);
     }
 
@@ -292,30 +300,68 @@ class ContentController extends Controller
 
     public function statistics(Request $request): View
     {
-        $locations = DB::table('titik_lokasi')->select('provinsi', 'date', 'confidence')->get();
-        $dashboardLocations = DB::table('titik_lokasi')
+        $locations = DB::table('titik_lokasi')
             ->whereNotNull('latitude')
             ->whereNotNull('longitude')
             ->get();
+        $spatialDataset = app(\App\Services\EmberStatisticsService::class)
+            ->spatialDataset($locations, $this->language($request));
+        $candidateData = $spatialDataset['candidate_data'];
         $dashboardFilters = $this->dashboardFilters($request);
-        $dashboard = app(\App\Services\EmberStatisticsService::class)
-            ->dashboard($dashboardLocations, $dashboardFilters, $this->language($request));
-        $emptyCounts = ['high' => 0, 'medium' => 0, 'low' => 0, 'unrated' => 0];
-        $summary = $locations->reduce(function (array $counts, object $location) {
-            $counts[$this->statusKey($location->confidence)]++;
+        $statistics = app(\App\Services\EmberStatisticsService::class);
+        $dashboard = $statistics
+            ->dashboard($locations, $dashboardFilters, $this->language($request));
+        $spatialDashboard = $spatialDataset['composition'];
+        $databaseTotal = DB::table('titik_lokasi')->count();
+        $historicalTotal = DB::table('titik_lokasi')
+            ->where('data_source', 'NASA FIRMS')
+            ->where('is_nrt', false)
+            ->count();
+        $historicalGeoreferenced = $locations->filter(fn (object $location) =>
+            ($location->data_source ?? null) === 'NASA FIRMS' && ! (bool) ($location->is_nrt ?? false)
+        )->count();
+        $nrtGeoreferenced = $locations->filter(fn (object $location) => (bool) ($location->is_nrt ?? false))->count();
+        $nrtTotal = DB::table('titik_lokasi')->where('is_nrt', true)->count();
+        $recordBreakdown = [
+            'database_total' => $databaseTotal,
+            'georeferenced_total' => $locations->count(),
+            'historical_total' => $historicalTotal,
+            'nrt_total' => $nrtTotal,
+            'legacy_total' => max(0, $databaseTotal - $historicalTotal - $nrtTotal),
+            'legacy_georeferenced' => max(0, $locations->count() - $historicalGeoreferenced - $nrtGeoreferenced),
+            'collection4_candidates' => count($candidateData['points']),
+            'collection4_candidate_overlaps' => $candidateData['overlap_count'],
+            'collection4_candidate_additional' => count($candidateData['points']) - $candidateData['overlap_count'],
+            'unique_spatial_total' => $spatialDashboard['total'],
+        ];
+        $summary = [
+            'total' => $spatialDashboard['total'],
+            'confidence_total' => $spatialDashboard['confidence_total'],
+            'confidence_category_total' => $spatialDashboard['confidence_category_total'],
+            ...$spatialDashboard['confidence_counts'],
+        ];
 
-            return $counts;
-        }, $emptyCounts);
+        $yearlyStatistics = collect($spatialDashboard['confidence_records'])
+            ->map(function (array $record) {
+                $timestamp = strtotime((string) ($record['date'] ?? ''));
+                if ($timestamp === false) {
+                    return null;
+                }
 
-        $yearlyStatistics = $locations
-            ->filter(fn (object $location) => filled($location->date))
-            ->groupBy(fn (object $location) => (int) substr((string) $location->date, 0, 4))
-            ->map(function ($yearLocations, int $year) use ($emptyCounts) {
-                $counts = $yearLocations->reduce(function (array $yearCounts, object $location) {
-                    $yearCounts[$this->statusKey($location->confidence)]++;
-
-                    return $yearCounts;
-                }, $emptyCounts);
+                return [
+                    'year' => (int) date('Y', $timestamp),
+                    'confidence_key' => $record['confidence_key'],
+                ];
+            })
+            ->filter()
+            ->groupBy('year')
+            ->map(function ($yearLocations, int $year) {
+                $counts = ['high' => 0, 'nominal' => 0, 'low' => 0];
+                foreach ($yearLocations as $record) {
+                    if (isset($counts[$record['confidence_key']])) {
+                        $counts[$record['confidence_key']]++;
+                    }
+                }
                 $total = array_sum($counts);
 
                 return [
@@ -357,8 +403,12 @@ class ContentController extends Controller
         return view('user.statistics', [
             'language' => $this->language($request),
             'dashboard' => $dashboard,
+            'spatialDashboard' => $spatialDashboard,
+            'spatialTotal' => $spatialDashboard['total'],
+            'recordBreakdown' => $recordBreakdown,
+            'nrtTotal' => $nrtTotal,
             'dashboardFilters' => $dashboardFilters,
-            'summary' => ['total' => $locations->count(), ...$summary],
+            'summary' => $summary,
             'yearlyStatistics' => $yearlyStatistics,
             'provinceYears' => $years,
             'provinceStatistics' => $provinceStatistics,
@@ -414,25 +464,6 @@ class ContentController extends Controller
         };
     }
 
-    private function statusKey(mixed $confidence): string
-    {
-        if ($confidence === null || trim((string) $confidence) === '') {
-            return 'unrated';
-        }
-
-        $value = strtolower(trim((string) $confidence));
-
-        if (in_array($value, ['high', 'tinggi'], true) || (is_numeric($value) && (float) $value >= 80)) {
-            return 'high';
-        }
-
-        if (in_array($value, ['nominal', 'medium', 'sedang'], true) || (is_numeric($value) && (float) $value >= 50)) {
-            return 'medium';
-        }
-
-        return 'low';
-    }
-
     private function statusFor(mixed $confidence, string $language): string
     {
         if ($confidence === null || trim((string) $confidence) === '') {
@@ -441,14 +472,28 @@ class ContentController extends Controller
 
         $value = strtolower(trim((string) $confidence));
 
-        if (in_array($value, ['high', 'tinggi'], true) || (is_numeric($value) && (float) $value >= 80)) {
+        if (is_numeric($value)) {
+            if ((float) $value >= 80) {
+                return $language === 'en' ? 'High' : 'Tinggi';
+            }
+            if ((float) $value >= 30) {
+                return 'Nominal';
+            }
+            return $language === 'en' ? 'Low' : 'Rendah';
+        }
+
+        if (in_array($value, ['high', 'tinggi'], true)) {
             return $language === 'en' ? 'High' : 'Tinggi';
         }
 
-        if (in_array($value, ['nominal', 'medium', 'sedang'], true) || (is_numeric($value) && (float) $value >= 50)) {
-            return $language === 'en' ? 'Medium' : 'Sedang';
+        if (in_array($value, ['nominal', 'medium', 'sedang'], true)) {
+            return 'Nominal';
         }
 
-        return $language === 'en' ? 'Low' : 'Rendah';
+        if (in_array($value, ['low', 'rendah'], true)) {
+            return $language === 'en' ? 'Low' : 'Rendah';
+        }
+
+        return $language === 'en' ? 'Unrated' : 'Belum dinilai';
     }
 }

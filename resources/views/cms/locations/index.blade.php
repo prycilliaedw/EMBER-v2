@@ -23,6 +23,21 @@
 
         <livewire:cms.location-csv-import />
 
+        <div class="mb-5 grid gap-3 rounded-2xl bg-slate-900 p-4 text-white sm:grid-cols-3">
+            <div>
+                <p class="text-xs font-bold uppercase tracking-wider text-slate-400">NASA FIRMS</p>
+                <p class="mt-1 text-sm font-bold">{{ $latestSync ? ucfirst(str_replace('_', ' ', $latestSync->status)) : 'Belum pernah sinkron' }}</p>
+            </div>
+            <div>
+                <p class="text-xs font-bold uppercase tracking-wider text-slate-400">Terakhir sinkron</p>
+                <p class="mt-1 text-sm font-bold">{{ $latestSync?->updated_at ? \Illuminate\Support\Carbon::parse($latestSync->updated_at)->timezone(config('app.timezone'))->format('d M Y H:i T') : '-' }}</p>
+            </div>
+            <div>
+                <p class="text-xs font-bold uppercase tracking-wider text-slate-400">Hotspot NRT</p>
+                <p class="mt-1 text-sm font-bold">{{ number_format($nrtTotal) }} titik tersimpan</p>
+            </div>
+        </div>
+
         <div class="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
             <div class="overflow-x-auto">
                 <table class="min-w-full divide-y divide-slate-200 text-left text-sm">

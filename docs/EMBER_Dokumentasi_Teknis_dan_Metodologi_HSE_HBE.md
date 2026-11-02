@@ -305,10 +305,11 @@ php artisan migrate:status
 npm run build
 ```
 
-8. Impor hotspot yang disediakan. **Backup database dahulu.** Opsi `--truncate` akan mengosongkan tabel `titik_lokasi` sebelum impor:
+8. Jalankan dry-run untuk memvalidasi jumlah baris, deduplikasi, dan distribusi kelas. Setelah meninjau hasil dan membuat backup database, jalankan impor idempoten tanpa opsi penghapusan:
 
 ```powershell
-php artisan ember:import-hotspots "storage/app/ember/source/EMBER_Hotspots_Enriched_Evidence_v2.csv" --truncate
+php artisan ember:import-hotspots "storage/app/ember/source/EMBER_Hotspots_Enriched_Evidence_v2.csv" --dry-run
+php artisan ember:import-hotspots "storage/app/ember/source/EMBER_Hotspots_Enriched_Evidence_v2.csv"
 ```
 
 9. Jalankan server:
@@ -323,9 +324,10 @@ Buka URL lokal yang dicetak oleh Artisan. Login CMS berada di `/cms/login`; seed
 
 1. Backup database.
 2. Pastikan kolom pada CSV sesuai dokumentasi dan ID kelas termasuk salah satu dari 13 ID.
-3. Jalankan impor. `--truncate` mengganti seluruh rekaman hotspot; tanpa flag ini data akan ditambahkan dan duplikasi tidak dideteksi otomatis.
-4. Periksa jumlah baris, distribusi kelas, nilai HSE/HBE kosong, distribusi FSI, dan tanggal terawal/terakhir.
-5. Pastikan `model_version` terisi `EMBER-HSE-HBE-SUGENO-DRAFT-1.0.0` pada setiap rekaman baru.
+3. Jalankan dry-run. Periksa jumlah baris valid/tidak valid, kecocokan yang sudah ada, duplikasi sumber, dan distribusi kelas.
+4. Setelah backup, jalankan impor tanpa opsi truncate. Identitas stabil dan unique index mencegah rekaman yang sama dimasukkan ulang; baris tidak valid membatalkan transaksi.
+5. Periksa jumlah baris, distribusi kelas, nilai HSE/HBE kosong, distribusi FSI, dan tanggal terawal/terakhir.
+6. Pastikan `classification_status=classified` dan `model_version` terisi `EMBER-HSE-HBE-SUGENO-DRAFT-1.0.0` pada setiap rekaman baru.
 
 ## 9. Quality assurance yang dilakukan saat penyiapan paket
 

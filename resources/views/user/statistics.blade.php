@@ -6,9 +6,8 @@
     @php
         $statuses = [
             'high' => ['label' => $language === 'en' ? 'High' : 'Tinggi', 'color' => 'bg-red-700', 'text' => 'text-red-700', 'hex' => '#b91c1c'],
-            'medium' => ['label' => $language === 'en' ? 'Medium' : 'Sedang', 'color' => 'bg-amber-600', 'text' => 'text-amber-700', 'hex' => '#d97706'],
+            'nominal' => ['label' => 'Nominal', 'color' => 'bg-amber-600', 'text' => 'text-amber-700', 'hex' => '#d97706'],
             'low' => ['label' => $language === 'en' ? 'Low' : 'Rendah', 'color' => 'bg-emerald-700', 'text' => 'text-emerald-700', 'hex' => '#047857'],
-            'unrated' => ['label' => $language === 'en' ? 'Unrated' : 'Belum dinilai', 'color' => 'bg-slate-700', 'text' => 'text-slate-700', 'hex' => '#334155'],
         ];
         $chartStatistics = $yearlyStatistics->sortBy('year')->values();
         $maxYearTotal = max(1, (int) $chartStatistics->max('total'));
@@ -28,13 +27,13 @@
             'high' => ['label' => $language === 'en' ? 'High' : 'Tinggi', 'hex' => '#b91c1c'],
             'nominal' => ['label' => 'Nominal', 'hex' => '#d97706'],
             'low' => ['label' => $language === 'en' ? 'Low' : 'Rendah', 'hex' => '#047857'],
-            'unrated' => ['label' => $language === 'en' ? 'Unrated' : 'Belum dinilai', 'hex' => '#334155'],
         ];
-        $dashboardClasses = $dashboard['classes']->sortBy('id')->values();
+        $dashboardClasses = $spatialDashboard['classes']->sortBy('id')->values();
+        $unresolvedDatabasePoint = collect($spatialDashboard['unresolved_points'])->first(fn (array $point) => isset($point['id']));
         $confidenceStops = [];
         $confidenceOffset = 0;
         foreach ($dashboardStatuses as $key => $status) {
-            $share = $dashboard['confidence'][$key]['share'];
+            $share = $spatialDashboard['confidence'][$key]['share'];
             $confidenceStops[] = $status['hex'].' '.$confidenceOffset.'% '.($confidenceOffset + $share).'%';
             $confidenceOffset += $share;
         }
@@ -49,6 +48,9 @@
                 $classStops[] = $class['color'].' '.$classOffset.'% '.($classOffset + $share).'%';
             }
             $classOffset += $share;
+        }
+        if ($spatialDashboard['unclassified_total'] > 0 && $spatialDashboard['total'] > 0) {
+            $classStops[] = '#cbd5e1 '.$classOffset.'% 100%';
         }
         $classDonut = $classOffset > 0 && $classStops !== []
             ? 'conic-gradient('.implode(', ', $classStops).')'
@@ -69,10 +71,10 @@
                 'color' => '#d97706',
             ],
             'fsi' => [
-                'title' => $language === 'en' ? 'FSI — Relative Susceptibility Index' : 'FSI — Indeks Kerentanan Relatif',
+                'title' => $language === 'en' ? 'Sugeno FSI — Relative Susceptibility Index' : 'FSI Sugeno — Indeks Kerentanan Relatif',
                 'description' => $language === 'en'
-                    ? 'Existing experimental class-context index (0–100), not the probability of fire.'
-                    : 'Indeks eksperimental berdasarkan konteks kelas (0–100), bukan probabilitas kebakaran.',
+                    ? 'Experimental class-context result calculated from the fixed HSE and HBE baselines with Zero-Order Sugeno FIS, not the probability of fire or a dynamically recalculated NRT baseline.'
+                    : 'Hasil eksperimental konteks kelas yang dihitung dari baseline HSE dan HBE tetap dengan Zero-Order Sugeno FIS, bukan probabilitas kebakaran atau baseline NRT yang dihitung ulang secara dinamis.',
                 'color' => '#2563eb',
             ],
         ];
@@ -91,12 +93,12 @@
     </section>
 
     <section class="relative mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8 lg:py-14">
-        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5" data-reveal>
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" data-reveal>
             <article class="relative overflow-hidden rounded-2xl bg-slate-950 p-5 text-white shadow-xl shadow-slate-950/10">
                 <div class="absolute -right-5 -top-5 size-24 rounded-full bg-red-500/20 blur-2xl" aria-hidden="true"></div>
-                <p class="relative text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">{{ $language === 'en' ? 'All locations' : 'Semua lokasi' }}</p>
+                <p class="relative text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">{{ $language === 'en' ? 'Unique spatial points' : 'Titik spasial unik' }}</p>
                 <p class="relative mt-3 text-4xl font-black tracking-tight">{{ number_format($summary['total']) }}</p>
-                <p class="relative mt-2 text-xs text-slate-500">{{ $language === 'en' ? 'Recorded monitoring points' : 'Titik pemantauan tercatat' }}</p>
+                <p class="relative mt-2 text-xs text-slate-500">{{ $language === 'en' ? 'Historical, Collection 4, NRT, and legacy sources with coordinate overlaps counted once' : 'Sumber historis, Collection 4, NRT, dan lama; koordinat berimpit dihitung satu kali' }}</p>
             </article>
             @foreach ($statuses as $key => $status)
                 <article class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -105,7 +107,7 @@
                         <span class="size-2.5 rounded-full {{ $status['color'] }} shadow-[0_0_0_4px_rgba(148,163,184,.1)]"></span>
                     </div>
                     <p class="mt-3 text-4xl font-black tracking-tight {{ $status['text'] }}">{{ number_format($summary[$key]) }}</p>
-                    <p class="mt-2 text-xs text-slate-400">{{ $summary['total'] > 0 ? number_format(($summary[$key] / $summary['total']) * 100, 1) : 0 }}% {{ $language === 'en' ? 'of total' : 'dari total' }}</p>
+                <p class="mt-2 text-xs text-slate-400">{{ $summary['confidence_category_total'] > 0 ? number_format(($summary[$key] / $summary['confidence_category_total']) * 100, 1) : 0 }}% {{ $language === 'en' ? 'of '.$summary['confidence_category_total'].' categorized NASA confidence records' : 'dari '.$summary['confidence_category_total'].' record Confidence NASA berkategori' }}</p>
                 </article>
             @endforeach
         </div>
@@ -116,7 +118,7 @@
                     <div>
                         <p class="text-[10px] font-black uppercase tracking-[0.18em] text-red-600">{{ $language === 'en' ? 'Data visualization' : 'Visualisasi data' }}</p>
                         <h2 class="mt-2 text-2xl font-black tracking-tight text-slate-950">{{ $language === 'en' ? 'Location trend by year' : 'Tren lokasi per tahun' }}</h2>
-                        <p class="mt-2 text-sm text-slate-500">{{ $language === 'en' ? 'Stacked bars show the confidence composition for each year.' : 'Batang bertumpuk menunjukkan komposisi confidence pada setiap tahun.' }}</p>
+                        <p class="mt-2 text-sm text-slate-500">{{ $language === 'en' ? 'NASA confidence values from the enriched historical source and NRT records; candidate and legacy points are excluded.' : 'Nilai Confidence NASA dari sumber historis dan record NRT; titik kandidat dan record lama dikecualikan.' }}</p>
                     </div>
                     <div class="flex flex-wrap gap-x-4 gap-y-2">
                         @foreach ($statuses as $status)
@@ -309,12 +311,12 @@
             <div class="mt-8 rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500">{{ $language === 'en' ? 'No dated location data is available yet.' : 'Belum ada data lokasi yang memiliki tanggal.' }}</div>
         @endif
     </section>
-    <section id="ember-statistics-dashboard" class="mx-auto max-w-7xl px-4 pb-4 sm:px-6 lg:px-8" data-hotspot-total="{{ $dashboard['total'] }}" data-classified-total="{{ $dashboard['mapped_total'] }}">
+        <section id="ember-statistics-dashboard" class="mx-auto max-w-7xl px-4 pb-4 sm:px-6 lg:px-8" data-hotspot-total="{{ $spatialDashboard['total'] }}" data-classified-total="{{ $spatialDashboard['mapped_total'] }}" data-unclassified-total="{{ $spatialDashboard['unclassified_total'] }}" data-confidence-total="{{ $spatialDashboard['confidence_total'] }}" data-confidence-category-total="{{ $spatialDashboard['confidence_category_total'] }}" data-stale-fsi-total="{{ $dashboard['stale_persisted_fsi_count'] }}">
         <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
                 <p class="text-[10px] font-black uppercase tracking-[0.18em] text-red-600">{{ $language === 'en' ? 'Interactive analytical view' : 'Tampilan analitik interaktif' }}</p>
                 <h2 class="mt-1 text-3xl font-black tracking-tight text-slate-950">{{ $language === 'en' ? 'EMBER hotspot statistics' : 'Statistik hotspot EMBER' }}</h2>
-                <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{{ $language === 'en' ? 'Live hotspot counts use the same georeferenced records and filters as the interactive map. HSE, HBE, and FSI remain class-level results under the existing methodology.' : 'Jumlah hotspot memakai data georeferensi dan filter yang sama dengan peta interaktif. HSE, HBE, dan FSI tetap merupakan hasil tingkat kelas sesuai metodologi yang ada.' }}</p>
+                <p class="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{{ $language === 'en' ? 'Overall spatial and class totals share the deduplicated dataset shown on the map. HSE, HBE, and FSI remain class-level results under the existing methodology.' : 'Total spasial dan kelas memakai dataset deduplikasi yang sama dengan peta. HSE, HBE, dan FSI tetap merupakan hasil tingkat kelas sesuai metodologi yang ada.' }}</p>
             </div>
             <a href="{{ route('user.map', array_filter([
                 'lang' => $language,
@@ -377,7 +379,7 @@
                         'moderate' => $language === 'en' ? 'Moderate' : 'Sedang',
                         'high' => $language === 'en' ? 'High' : 'Tinggi',
                         'very_high' => $language === 'en' ? 'Very high' : 'Sangat tinggi',
-                        'unrated' => $language === 'en' ? 'Unrated' : 'Belum dinilai',
+                        'unrated' => $language === 'en' ? 'No FSI class' : 'Tanpa kelas FSI',
                     ] as $key => $label)
                         <label class="inline-flex items-center gap-1.5 text-[10px] font-semibold normal-case text-slate-700">
                             <input type="checkbox" name="fsi[]" value="{{ $key }}" @checked($dashboardFilters['fsi'] === [] || in_array($key, $dashboardFilters['fsi'], true))>
@@ -392,18 +394,14 @@
             </div>
         </form>
 
-        <div class="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <article class="rounded-2xl bg-slate-950 p-4 text-white">
-                <p class="text-[9px] font-black uppercase tracking-wider text-slate-400">{{ $language === 'en' ? 'Filtered georeferenced hotspots' : 'Hotspot georeferensi terfilter' }}</p>
-                <p class="mt-2 text-3xl font-black">{{ number_format($dashboard['total']) }}</p>
+                <p class="text-[9px] font-black uppercase tracking-wider text-slate-400">{{ $language === 'en' ? 'Unique spatial points' : 'Titik spasial unik' }}</p>
+                <p class="mt-2 text-3xl font-black">{{ number_format($spatialDashboard['total']) }}</p>
             </article>
             <article class="rounded-2xl border border-slate-200 bg-white p-4">
-                <p class="text-[9px] font-black uppercase tracking-wider text-slate-500">{{ $language === 'en' ? 'Classified hotspots' : 'Hotspot dengan kelas' }}</p>
-                <p class="mt-2 text-3xl font-black text-slate-900">{{ number_format($dashboard['mapped_total']) }}</p>
-            </article>
-            <article class="rounded-2xl border border-slate-200 bg-white p-4">
-                <p class="text-[9px] font-black uppercase tracking-wider text-slate-500">{{ $language === 'en' ? 'Without a recognized class' : 'Tanpa kelas yang dikenali' }}</p>
-                <p class="mt-2 text-3xl font-black text-slate-900">{{ number_format($dashboard['unclassified_total']) }}</p>
+                <p class="text-[9px] font-black uppercase tracking-wider text-slate-500">{{ $language === 'en' ? 'Class-assigned unique points' : 'Titik unik dengan kelas' }}</p>
+                <p class="mt-2 text-3xl font-black text-slate-900">{{ number_format($spatialDashboard['mapped_total']) }}</p>
             </article>
             <article class="rounded-2xl border border-slate-200 bg-white p-4">
                 <p class="text-[9px] font-black uppercase tracking-wider text-slate-500">{{ $language === 'en' ? 'Classes represented' : 'Kelas yang ditampilkan' }}</p>
@@ -414,18 +412,18 @@
         <div class="grid gap-5 xl:grid-cols-2">
             <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="stats-confidence-title">
                 <h3 id="stats-confidence-title" class="text-lg font-black text-slate-950">{{ $language === 'en' ? 'A. NASA Confidence Distribution' : 'A. Distribusi Confidence NASA' }}</h3>
-                <p class="mt-1 text-xs text-slate-500">{{ $language === 'en' ? 'Categories and proportions for all filtered georeferenced hotspots.' : 'Kategori dan proporsi seluruh hotspot georeferensi yang lolos filter.' }}</p>
+                <p class="mt-1 text-xs text-slate-500">{{ $language === 'en' ? 'Denominator: '.$spatialDashboard['confidence_category_total'].' records with an actual High, Nominal, or Low NASA Confidence value ('.$spatialDashboard['confidence_total'].' non-empty NASA attributes total). Candidate samples and legacy records are excluded.' : 'Penyebut: '.$spatialDashboard['confidence_category_total'].' record dengan nilai Confidence NASA aktual High, Nominal, atau Low (total '.$spatialDashboard['confidence_total'].' atribut NASA tidak kosong). Sampel kandidat dan record lama dikecualikan.' }}</p>
                 <div class="mt-5 grid items-center gap-5 sm:grid-cols-[160px_1fr]">
-                    <div class="relative mx-auto size-40 rounded-full" style="background: {{ $confidenceDonut }}" role="img" aria-label="{{ $language === 'en' ? 'NASA confidence distribution for ' : 'Distribusi confidence NASA untuk ' }}{{ number_format($dashboard['total']) }} {{ $language === 'en' ? 'hotspots' : 'hotspot' }}">
+                    <div class="relative mx-auto size-40 rounded-full" style="background: {{ $confidenceDonut }}" role="img" aria-label="{{ $language === 'en' ? 'NASA confidence distribution for ' : 'Distribusi confidence NASA untuk ' }}{{ number_format($spatialDashboard['confidence_category_total']) }} {{ $language === 'en' ? 'High, Nominal, or Low values' : 'nilai High, Nominal, atau Low' }}">
                         <div class="absolute inset-[25%] flex flex-col items-center justify-center rounded-full bg-white text-center shadow-inner">
-                            <strong class="text-2xl font-black">{{ number_format($dashboard['total']) }}</strong>
-                            <span class="text-[8px] font-bold uppercase text-slate-500">{{ $language === 'en' ? 'hotspots' : 'hotspot' }}</span>
+                            <strong class="text-2xl font-black">{{ number_format($spatialDashboard['confidence_category_total']) }}</strong>
+                            <span class="text-[8px] font-bold uppercase text-slate-500">{{ $language === 'en' ? 'NASA confidence n' : 'n Confidence NASA' }}</span>
                         </div>
                     </div>
                     <div class="space-y-2">
                         @foreach ($dashboardStatuses as $key => $status)
-                            @php($item = $dashboard['confidence'][$key])
-                            <div class="flex items-center gap-2 text-xs" title="{{ $status['label'] }}: {{ number_format($item['count']) }} / {{ number_format($dashboard['total']) }} ({{ number_format($item['share'], 1) }}%)">
+                            @php($item = $spatialDashboard['confidence'][$key])
+                            <div class="flex items-center gap-2 text-xs" title="{{ $status['label'] }}: {{ number_format($item['count']) }} / {{ number_format($spatialDashboard['confidence_category_total']) }} ({{ number_format($item['share'], 1) }}%)">
                                 <span class="size-2.5 rounded-full" style="background: {{ $status['hex'] }}"></span>
                                 <span class="flex-1 font-semibold text-slate-700">{{ $status['label'] }}</span>
                                 <strong>{{ number_format($item['count']) }}</strong>
@@ -438,17 +436,17 @@
 
             <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="stats-class-title">
                 <h3 id="stats-class-title" class="text-lg font-black text-slate-950">{{ $language === 'en' ? 'B. Hotspot Distribution by Land-Cover Class' : 'B. Distribusi Hotspot per Kelas Tutupan Lahan' }}</h3>
-                <p class="mt-1 text-xs text-slate-500">{{ $language === 'en' ? 'Thirteen official classes; percentages use classified hotspots as the denominator.' : 'Tiga belas kelas resmi; persentase menggunakan hotspot berkelas sebagai penyebut.' }}</p>
+                <p class="mt-1 text-xs text-slate-500">{{ $language === 'en' ? 'All 13 approved classes; percentages use the full unique spatial total of '.number_format($spatialDashboard['total']).'. Candidate classes use the authoritative crosswalk.' : 'Seluruh 13 kelas yang disetujui; persentase memakai total spasial unik '.number_format($spatialDashboard['total']).'. Kelas kandidat memakai crosswalk otoritatif.' }}</p>
                 <div class="mt-5 grid items-center gap-5 sm:grid-cols-[160px_1fr]">
-                    <div class="relative mx-auto size-40 rounded-full" style="background: {{ $classDonut }}" role="img" aria-label="{{ $language === 'en' ? 'Distribution across all 13 land-cover classes; denominator ' : 'Distribusi seluruh 13 kelas tutupan lahan; penyebut ' }}{{ number_format($dashboard['mapped_total']) }}">
+                    <div class="relative mx-auto size-40 rounded-full" style="background: {{ $classDonut }}" role="img" aria-label="{{ $language === 'en' ? 'Distribution across all 13 land-cover classes; unique spatial denominator ' : 'Distribusi seluruh 13 kelas tutupan lahan; penyebut spasial unik ' }}{{ number_format($spatialDashboard['total']) }}">
                         <div class="absolute inset-[25%] flex flex-col items-center justify-center rounded-full bg-white text-center shadow-inner">
-                            <strong class="text-2xl font-black">{{ number_format($dashboard['mapped_total']) }}</strong>
-                            <span class="text-[8px] font-bold uppercase text-slate-500">{{ $language === 'en' ? 'classified' : 'berkelas' }}</span>
+                            <strong class="text-2xl font-black">{{ number_format($spatialDashboard['total']) }}</strong>
+                            <span class="text-[8px] font-bold uppercase text-slate-500">{{ $language === 'en' ? 'unique points' : 'titik unik' }}</span>
                         </div>
                     </div>
                     <div class="max-h-48 space-y-1 overflow-y-auto pr-1">
                         @foreach ($dashboardClasses as $class)
-                            <div class="flex items-center gap-2 text-[10px]" title="{{ $class['display_name'] }}: {{ number_format($class['count']) }} / {{ number_format($dashboard['mapped_total']) }} ({{ number_format($class['share'], 2) }}%)">
+                            <div class="flex items-center gap-2 text-[10px]" title="{{ $class['display_name'] }}: {{ number_format($class['count']) }} / {{ number_format($spatialDashboard['total']) }} ({{ number_format($class['share'], 2) }}%)">
                                 <span class="size-2 shrink-0 rounded-full" style="background: {{ $class['color'] }}"></span>
                                 <span class="min-w-0 flex-1 truncate font-semibold text-slate-700">{{ $class['display_name'] }}</span>
                                 <strong>{{ number_format($class['count']) }}</strong>
@@ -457,12 +455,24 @@
                         @endforeach
                     </div>
                 </div>
-                <p class="mt-3 text-[10px] leading-4 text-slate-500">{{ $language === 'en' ? 'Zero means no matching hotspot was recorded in that class; it is distinct from missing class data. ' : 'Nol berarti tidak ada hotspot yang cocok pada kelas tersebut; berbeda dari data kelas yang tidak tersedia. ' }}{{ $language === 'en' ? 'Unclassified locations are excluded from this donut denominator and counted above.' : 'Lokasi tanpa kelas dikeluarkan dari penyebut donat ini dan dihitung di atas.' }}</p>
+                <p class="mt-3 text-[10px] leading-4 text-slate-500">
+                    @if ($spatialDashboard['unclassified_total'] > 0)
+                        {{ $language === 'en' ? 'One point is excluded from the 13 class counts because its legacy class assignment is unverified' : 'Satu titik tidak masuk dalam hitungan 13 kelas karena penetapan kelas record lamanya belum terverifikasi' }}
+                        @if ($unresolvedDatabasePoint)
+                            {{ $language === 'en' ? ': database ID '.$unresolvedDatabasePoint['id'].' at '.$unresolvedDatabasePoint['latitude'].', '.$unresolvedDatabasePoint['longitude'].'. ' : ': ID database '.$unresolvedDatabasePoint['id'].' pada '.$unresolvedDatabasePoint['latitude'].', '.$unresolvedDatabasePoint['longitude'].'. ' }}
+                        @else
+                            .
+                        @endif
+                        {{ $language === 'en' ? 'It remains in the denominator; no class was inferred.' : 'Titik tetap dalam penyebut; kelas tidak ditebak.' }}
+                    @else
+                        {{ $language === 'en' ? 'Every unique spatial point has a verified approved class assignment.' : 'Setiap titik spasial unik memiliki penetapan kelas resmi yang terverifikasi.' }}
+                    @endif
+                </p>
             </section>
 
-            @foreach ($metricCharts as $metric => $chart)
+            @foreach (collect($metricCharts)->except('fsi') as $metric => $chart)
                 <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="stats-{{ $metric }}-title">
-                    <h3 id="stats-{{ $metric }}-title" class="text-lg font-black text-slate-950">{{ $loop->iteration === 1 ? 'C. ' : ($loop->iteration === 2 ? 'D. ' : 'E. ') }}{{ $chart['title'] }}</h3>
+                    <h3 id="stats-{{ $metric }}-title" class="text-lg font-black text-slate-950">{{ $loop->iteration === 1 ? 'C. ' : 'D. ' }}{{ $chart['title'] }}</h3>
                     <p class="mt-1 text-xs leading-5 text-slate-500">{{ $chart['description'] }}</p>
                     <div class="mt-4 space-y-2">
                         @foreach ($dashboardClasses as $class)
@@ -479,12 +489,81 @@
                     <p class="mt-3 text-[10px] text-slate-500">{{ $language === 'en' ? 'Scale: 0–100. Scores are class-level and are not aggregated across classes.' : 'Skala: 0–100. Skor tingkat kelas dan tidak diagregasi lintas kelas.' }}</p>
                 </section>
             @endforeach
+
+            <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="stats-hse-hbe-title">
+                <h3 id="stats-hse-hbe-title" class="text-lg font-black text-slate-950">{{ $language === 'en' ? 'E. HSE vs HBE Comparison' : 'E. Perbandingan HSE dan HBE' }}</h3>
+                <p class="mt-1 text-xs leading-5 text-slate-500">{{ $language === 'en' ? 'Fixed 2021–2023 HSE compared with the fixed pre-2024 HBE baseline for all 13 classes.' : 'HSE tetap 2021–2023 dibandingkan dengan baseline HBE tetap pra-2024 untuk 13 kelas.' }}</p>
+
+                <div class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl bg-slate-50 px-3 py-2.5">
+                    <span class="inline-flex items-center gap-2 text-[10px] font-bold text-slate-700">
+                        <span class="h-2 w-5 rounded-full" style="background: #DC2626"></span>
+                        {{ $language === 'en' ? 'HSE — Hotspot Evidence' : 'HSE — Bukti Hotspot' }}
+                    </span>
+                    <span class="inline-flex items-center gap-2 text-[10px] font-bold text-slate-700">
+                        <span class="h-2 w-5 rounded-full" style="background: #EA580C"></span>
+                        {{ $language === 'en' ? 'HBE — Historical Burn Evidence' : 'HBE — Bukti Kebakaran Historis' }}
+                    </span>
+                    <span class="text-[10px] font-semibold text-slate-500 sm:ml-auto">{{ $language === 'en' ? 'Scale 0–100' : 'Skala 0–100' }}</span>
+                </div>
+
+                <div class="mt-3 hidden grid-cols-[minmax(0,180px)_minmax(0,1fr)] gap-4 sm:grid">
+                    <span></span>
+                    <div class="flex justify-between text-[8px] font-semibold tabular-nums text-slate-400">
+                        <span>0</span><span>25</span><span>50</span><span>75</span><span>100</span>
+                    </div>
+                </div>
+                <div class="mt-3 divide-y divide-slate-100">
+                    @foreach ($dashboardClasses as $class)
+                        @php($hseValue = $class['hse'])
+                        @php($hbeValue = $class['hbe'])
+                        @php($hseWidth = $hseValue === null ? 0 : max(0, min(100, (float) $hseValue)))
+                        @php($hbeWidth = $hbeValue === null ? 0 : max(0, min(100, (float) $hbeValue)))
+                        <div class="grid gap-1.5 py-2.5 sm:grid-cols-[minmax(0,180px)_minmax(0,1fr)] sm:items-center sm:gap-4">
+                            <p class="truncate text-[10px] font-semibold text-slate-700" title="{{ $class['display_name'] }}">{{ $class['display_name'] }}</p>
+                            <div class="space-y-1">
+                                <div class="flex items-center gap-2" title="HSE: {{ $hseValue === null ? ($language === 'en' ? 'unavailable' : 'tidak tersedia') : number_format($hseValue, 3) . ' / 100' }}">
+                                    <span class="w-7 shrink-0 text-[9px] font-black uppercase tracking-wide text-red-700">HSE</span>
+                                    <span class="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                                        <span class="block h-full rounded-full" style="width: {{ $hseWidth }}%; background: #DC2626"></span>
+                                    </span>
+                                    <strong class="w-10 shrink-0 text-right text-[10px] tabular-nums text-slate-700">{{ $hseValue === null ? ($language === 'en' ? 'N/A' : 'T/A') : number_format($hseValue, 1) }}</strong>
+                                </div>
+                                <div class="flex items-center gap-2" title="HBE: {{ $hbeValue === null ? ($language === 'en' ? 'unavailable' : 'tidak tersedia') : number_format($hbeValue, 3) . ' / 100' }}">
+                                    <span class="w-7 shrink-0 text-[9px] font-black uppercase tracking-wide text-orange-700">HBE</span>
+                                    <span class="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                                        <span class="block h-full rounded-full" style="width: {{ $hbeWidth }}%; background: #EA580C"></span>
+                                    </span>
+                                    <strong class="w-10 shrink-0 text-right text-[10px] tabular-nums text-slate-700">{{ $hbeValue === null ? ($language === 'en' ? 'N/A' : 'T/A') : number_format($hbeValue, 1) }}</strong>
+                                </div>
+                            </div>
+                        </div>
+                    @endforeach
+                </div>
+            </section>
+
+            <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="stats-fsi-title">
+                <h3 id="stats-fsi-title" class="text-lg font-black text-slate-950">{{ $language === 'en' ? 'F. '.$metricCharts['fsi']['title'] : 'F. '.$metricCharts['fsi']['title'] }}</h3>
+                <p class="mt-1 text-xs leading-5 text-slate-500">{{ $metricCharts['fsi']['description'] }}</p>
+                <div class="mt-4 space-y-2">
+                    @foreach ($dashboardClasses as $class)
+                        @php($score = $class['fsi'])
+                        <div class="grid w-full grid-cols-[minmax(0,1fr)_minmax(72px,1fr)_42px] items-center gap-2 rounded text-[10px]">
+                            <span class="truncate font-semibold text-slate-700">{{ $class['display_name'] }}</span>
+                            <span class="h-2 overflow-hidden rounded-full bg-slate-100">
+                                <span class="block h-full rounded-full" style="width: {{ $score === null ? 0 : max(0, min(100, (float) $score)) }}%; background: {{ $metricCharts['fsi']['color'] }}"></span>
+                            </span>
+                            <strong class="text-right">{{ $score === null ? ($language === 'en' ? 'N/A' : 'T/A') : number_format($score, 1) }}</strong>
+                        </div>
+                    @endforeach
+                </div>
+                <p class="mt-3 text-[10px] text-slate-500">{{ $language === 'en' ? 'Scale: 0–100. FSI is recalculated only from fixed class baselines and current FIS configuration, never from persisted hotspot FSI values.' : 'Skala: 0–100. FSI dihitung ulang hanya dari baseline kelas tetap dan konfigurasi FIS saat ini, bukan dari nilai FSI hotspot yang tersimpan.' }}</p>
+            </section>
         </div>
 
         <section class="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-labelledby="stats-table-title">
             <div class="border-b border-slate-200 p-5">
                 <h3 id="stats-table-title" class="text-xl font-black text-slate-950">{{ $language === 'en' ? 'Complete class-level statistics' : 'Statistik lengkap tingkat kelas' }}</h3>
-                <p class="mt-1 text-xs leading-5 text-slate-500">{{ $language === 'en' ? 'Hotspot counts reflect the filters above. HSE/HBE/FSI and supporting source metrics are class-level model data, not per-year or per-province recalculations.' : 'Jumlah hotspot mengikuti filter di atas. HSE/HBE/FSI dan metrik sumber adalah data model tingkat kelas, bukan hitung ulang per tahun atau provinsi.' }}</p>
+                <p class="mt-1 text-xs leading-5 text-slate-500">{{ $language === 'en' ? 'Class counts use the complete unique spatial dataset; percentages use its full denominator. Confidence counts include only source records with an actual NASA value. HSE/HBE/FSI remain class-level model results.' : 'Jumlah kelas memakai seluruh dataset spasial unik; persentase memakai penyebut lengkapnya. Jumlah Confidence hanya memasukkan sumber dengan nilai NASA aktual. HSE/HBE/FSI tetap hasil model tingkat kelas.' }}</p>
                 <p class="mt-1 text-xs leading-5 text-slate-500">{{ $language === 'en' ? 'Configured mapped class area is the 2024 source area; it is not adjusted to the selected year or province. Historical burn inputs are provisional reconstructions.' : 'Luas kelas terpetakan yang dikonfigurasi adalah luas sumber tahun 2024; tidak disesuaikan dengan tahun atau provinsi terpilih. Masukan kebakaran historis merupakan rekonstruksi sementara.' }}</p>
             </div>
             <div class="overflow-x-auto">

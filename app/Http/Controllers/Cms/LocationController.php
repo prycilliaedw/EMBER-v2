@@ -22,6 +22,8 @@ class LocationController extends Controller
 
         return view('cms.locations.index', [
             'locations' => $locations,
+            'latestSync' => DB::table('firms_sync_runs')->orderByDesc('created_at')->first(),
+            'nrtTotal' => DB::table('titik_lokasi')->where('is_nrt', true)->count(),
         ]);
     }
 
