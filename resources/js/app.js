@@ -31,7 +31,7 @@ const EmberMap = {
     language: 'id',
     selectedYear: 'all',
     activeStatusKeys: new Set(['high', 'medium', 'low', 'unrated']),
-    activeConfidenceKeys: new Set(['low', 'nominal', 'high', 'unrated']),
+    activeConfidenceKeys: new Set(['low', 'nominal', 'high']),
     activeFsiKeys: new Set(['very_low', 'low', 'moderate', 'high', 'very_high', 'unrated']),
     activeLandCover: 'all',
     preserveQueryProvinceOnInitialZoom: false,
@@ -48,7 +48,7 @@ const EmberMap = {
             ? requestedYear
             : 'all';
 
-        const allowedConfidence = ['low', 'nominal', 'high', 'unrated'];
+        const allowedConfidence = ['low', 'nominal', 'high'];
         if (params.has('confidence')) {
             this.activeConfidenceKeys = new Set(
                 params.get('confidence').split(',').filter((key) => allowedConfidence.includes(key)),
@@ -91,8 +91,8 @@ const EmberMap = {
         setOrDelete('year', this.selectedYear, this.selectedYear === 'all');
         setOrDelete(
             'confidence',
-            ['low', 'nominal', 'high', 'unrated'].filter((key) => this.activeConfidenceKeys.has(key)).join(','),
-            this.activeConfidenceKeys.size === 4,
+            ['low', 'nominal', 'high'].filter((key) => this.activeConfidenceKeys.has(key)).join(','),
+            this.activeConfidenceKeys.size === 3,
         );
         setOrDelete(
             'fsi',
@@ -570,19 +570,18 @@ const EmberMap = {
 
             const confidence = location.confidence;
             const status = this.statusFor(confidence);
+            if (!['high', 'nominal', 'low'].includes(status.key)) return;
             const layerKey = location.map_layer
                 || (Number(location.is_nrt) === 1 ? 'nrt' : (location.data_source === 'NASA FIRMS' ? 'historical' : 'legacy'));
             if (this.activeLayerKeys.has(layerKey)) {
                 this.visibleDatabaseCoordinates.add(this.coordinateKey(latitude, longitude));
             }
             const isNrt = layerKey === 'nrt';
-            const isLegacy = layerKey === 'legacy';
             const marker = L.circleMarker([latitude, longitude], {
-                radius: isNrt ? 8 : 7,
-                color: isNrt ? '#2563eb' : (isLegacy ? '#475569' : '#ffffff'),
-                weight: isNrt || isLegacy ? 3 : 2,
-                dashArray: isNrt ? '2 2' : (isLegacy ? '1 3' : null),
-                fillColor: isLegacy ? '#64748b' : status.color,
+                radius: 3.5,
+                color: '#ffffff',
+                weight: 1.5,
+                fillColor: status.color,
                 fillOpacity: 1,
                 interactive: true,
                 bubblingMouseEvents: false,
@@ -665,14 +664,15 @@ const EmberMap = {
             const latitude = Number(candidate.latitude);
             const longitude = Number(candidate.longitude);
             if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+            const status = this.statusFor(candidate.confidence);
+            if (!['high', 'nominal', 'low'].includes(status.key) || !this.activeConfidenceKeys.has(status.key)) return;
             if (this.visibleDatabaseCoordinates.has(this.coordinateKey(latitude, longitude))) return;
             const marker = L.circleMarker([latitude, longitude], {
-                radius: 6,
-                color: '#6d28d9',
-                weight: 2,
-                dashArray: '3 2',
-                fillColor: '#8b5cf6',
-                fillOpacity: 0.9,
+                radius: 3.5,
+                color: '#ffffff',
+                weight: 1.5,
+                fillColor: status.color,
+                fillOpacity: 1,
                 interactive: true,
                 bubblingMouseEvents: false,
             });
@@ -682,7 +682,7 @@ const EmberMap = {
             );
             marker.on('click', () => this.showLocationDetail({ ...candidate, is_candidate: true }, {
                 label: this.language === 'en' ? 'Collection 4 sampled candidate' : 'Kandidat sampel Collection 4',
-                color: '#7c3aed',
+                color: status.color,
             }));
             marker.addTo(layer);
             shown += 1;
@@ -886,7 +886,7 @@ const EmberMap = {
             event.preventDefault();
             event.stopPropagation();
 
-            this.activeConfidenceKeys = new Set(['low', 'nominal', 'high', 'unrated']);
+        this.activeConfidenceKeys = new Set(['low', 'nominal', 'high']);
             this.activeFsiKeys = new Set([
                 'very_low',
                 'low',
@@ -959,10 +959,7 @@ const EmberMap = {
             const matchesVillage = !this.boundarySelection.village
                 || normalize(location.desa) === normalize(this.boundarySelection.village);
 
-            const confidenceClass =
-                location.confidence_class ||
-                this.confidenceClass(location.confidence) ||
-                'unrated';
+            const confidenceClass = location.confidence_class || this.confidenceClass(location.confidence);
 
             const fsiClass = this.fsiKey(location.fsi_class);
 
@@ -1335,7 +1332,7 @@ const EmberMap = {
         const showFullSpatialSet = this.selectedYear === 'all'
             && !this.boundarySelection.province
             && this.activeLandCover === 'all'
-            && this.activeConfidenceKeys.size === 4
+            && this.activeConfidenceKeys.size === 3
             && this.activeFsiKeys.size === 6;
         let filtered = this.getFilteredLocations();
         if (this.boundarySelection.province) {
@@ -1492,11 +1489,14 @@ const EmberMap = {
             const normalized = String(confidence).trim().toLowerCase();
             return ({
                 high: 'high',
+                h: 'high',
                 tinggi: 'high',
                 nominal: 'nominal',
+                n: 'nominal',
                 medium: 'nominal',
                 sedang: 'nominal',
                 low: 'low',
+                l: 'low',
                 rendah: 'low',
             })[normalized] || null;
         }
@@ -1515,45 +1515,26 @@ const EmberMap = {
     },
 
     statusFor(confidence) {
-        if (confidence === null || confidence === undefined || String(confidence).trim() === '') {
+        const key = this.confidenceClass(confidence);
+        if (key === 'high') {
             return {
-                key: 'unrated',
-                label: this.language === 'en' ? 'Unrated' : 'Belum dinilai',
-                color: '#64748b',
-            };
-        }
-
-        const numericValue = Number(confidence);
-
-        if (!Number.isFinite(numericValue)) {
-            return {
-                key: 'unrated',
-                label: this.language === 'en' ? 'Unrated' : 'Belum dinilai',
-                color: '#64748b',
-            };
-        }
-
-        if (numericValue >= 80) {
-            return {
-                key: 'high',
+                key,
                 label: this.language === 'en' ? 'High' : 'Tinggi',
                 color: '#ef4444',
             };
         }
-
-        if (numericValue >= 30) {
+        if (key === 'nominal') {
             return {
-                key: 'nominal',
+                key,
                 label: 'Nominal',
                 color: '#f59e0b',
             };
         }
+        if (key === 'low') {
+            return { key, label: this.language === 'en' ? 'Low' : 'Rendah', color: '#10b981' };
+        }
+        return { key: 'unrated', label: this.language === 'en' ? 'Unrated' : 'Belum dinilai', color: '#64748b' };
 
-        return {
-            key: 'low',
-            label: this.language === 'en' ? 'Low' : 'Rendah',
-            color: '#10b981',
-        };
     },
 
     showLocationDetail(location, status) {

@@ -451,11 +451,21 @@ class ContentController extends Controller
 
     private function confidenceClass(mixed $confidence): ?string
     {
-        if ($confidence === null || trim((string) $confidence) === '' || ! is_numeric($confidence)) {
+        if ($confidence === null || trim((string) $confidence) === '') {
             return null;
         }
 
-        $value = (float) $confidence;
+        $normalized = strtolower(trim((string) $confidence));
+        if (! is_numeric($normalized)) {
+            return match ($normalized) {
+                'high', 'h', 'tinggi' => 'high',
+                'nominal', 'n', 'medium', 'sedang' => 'nominal',
+                'low', 'l', 'rendah' => 'low',
+                default => null,
+            };
+        }
+
+        $value = (float) $normalized;
 
         return match (true) {
             $value < 30 => 'low',
@@ -482,15 +492,15 @@ class ContentController extends Controller
             return $language === 'en' ? 'Low' : 'Rendah';
         }
 
-        if (in_array($value, ['high', 'tinggi'], true)) {
+        if (in_array($value, ['high', 'h', 'tinggi'], true)) {
             return $language === 'en' ? 'High' : 'Tinggi';
         }
 
-        if (in_array($value, ['nominal', 'medium', 'sedang'], true)) {
+        if (in_array($value, ['nominal', 'n', 'medium', 'sedang'], true)) {
             return 'Nominal';
         }
 
-        if (in_array($value, ['low', 'rendah'], true)) {
+        if (in_array($value, ['low', 'l', 'rendah'], true)) {
             return $language === 'en' ? 'Low' : 'Rendah';
         }
 

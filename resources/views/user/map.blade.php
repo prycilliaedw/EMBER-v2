@@ -154,12 +154,11 @@
                 <span class="text-[9px] font-black uppercase tracking-[0.12em] text-slate-400">{{ $language === 'en' ? 'Select all' : 'Pilih semua' }}</span>
                 <button type="button" data-map-status="all" class="text-[9px] font-black text-red-600 transition hover:text-red-500">{{ $language === 'en' ? 'All' : 'Semua' }}</button>
             </div>
-            <div class="grid grid-cols-2 gap-2 text-[11px] font-bold text-slate-600 sm:grid-cols-4">
+            <div class="grid grid-cols-2 gap-2 text-[11px] font-bold text-slate-600 sm:grid-cols-3">
                 @foreach ([
                     ['low', 'bg-emerald-500', $language === 'en' ? 'Low' : 'Rendah'],
                     ['nominal', 'bg-amber-400', 'Nominal'],
                     ['high', 'bg-red-500', $language === 'en' ? 'High' : 'Tinggi'],
-                    ['unrated', 'bg-slate-500', $language === 'en' ? 'Unrated' : 'Belum dinilai'],
                 ] as [$key, $color, $label])
                     <button type="button" data-map-confidence="{{ $key }}" data-map-status="{{ $key }}" aria-pressed="true" class="map-status-option flex min-w-0 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2 py-2.5 text-center transition hover:border-slate-300 hover:bg-slate-50">
                         <span class="size-2 shrink-0 rounded-full {{ $color }}"></span>

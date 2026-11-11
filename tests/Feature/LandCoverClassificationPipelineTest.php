@@ -43,6 +43,10 @@ class LandCoverClassificationPipelineTest extends TestCase
         $this->assertSame('Pertanian Lainnya', $row->land_cover);
         $this->assertSame('classified', $row->classification_status);
         $this->assertNull($row->classification_error);
+        $this->assertNotNull($row->hotspot_evidence);
+        $this->assertNotNull($row->historical_burn_evidence);
+        $this->assertNotNull($row->fsi_score);
+        $this->assertNotNull($row->fsi_class);
         $this->assertSame(1, $first['inserted']);
         $this->assertSame(0, $first['updated']);
         $this->assertSame(1, $second['updated']);

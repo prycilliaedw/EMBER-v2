@@ -1,5 +1,7 @@
 # MapBiomas Pipeline Architecture
 
+Panduan alur operasional lengkap dari API FIRMS sampai statistik tersedia di [EMBER: Metodologi dan Alur Otomatis End-to-End](EMBER_END_TO_END_METHODOLOGY.md).
+
 ## Purpose
 
 The MapBiomas pipeline assigns the land-cover class for each newly ingested NASA FIRMS hotspot from the authoritative 2024 Collection 4 GeoTIFF. It does not infer a province or class from administrative text.
@@ -23,7 +25,17 @@ The MapBiomas pipeline assigns the land-cover class for each newly ingested NASA
 6. Laravel starts or reuses the persistent Python process using the configured absolute virtual-environment executable.
 7. The sampler reads every authoritative raster only as a small bounding-box candidate, then samples one pixel.
 8. The raw value is mapped through the authoritative CSV.
-9. The job updates only classification fields plus queue timestamps/status, never HSE, HBE, FSI, confidence, or NASA FIRMS source fields.
+9. The job stores the mapped land-cover class, class-level HSE/HBE values, and
+   the corresponding FSI result. It does not modify confidence or NASA FIRMS
+   source fields.
+
+The province matcher uses the included 10-province GeoJSON. The classification
+job separately uses `AdministrativeLocationMatcher` and
+`storage/app/ember/source/sumatra_admin/village.ndjson` to attribute
+regency/city, district, and village when that boundary dataset and its Python
+matcher are installed. These administrative results are independent of the
+MapBiomas raster sample and may be unavailable when the detailed boundary
+source is missing.
 
 ## Raster inventory
 

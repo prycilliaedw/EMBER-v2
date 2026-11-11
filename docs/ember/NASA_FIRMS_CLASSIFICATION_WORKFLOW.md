@@ -1,30 +1,20 @@
 # NASA FIRMS Classification Workflow
 
-## Normal synchronization
+Dokumen end-to-end saat ini dipelihara di [EMBER: Metodologi dan Alur Otomatis End-to-End](EMBER_END_TO_END_METHODOLOGY.md). Dokumen itu menjelaskan pemanggilan FIRMS, jendela dua hari, jadwal scheduler, upsert/deduplikasi, pencocokan provinsi sampai desa, raster/crosswalk MapBiomas, queue, HSE/HBE/FSI, serta keseimbangan statistik.
 
-Run synchronization with the normal queue environment:
+## Ringkasan operasional
 
-```powershell
-php artisan ember:sync-firms --source=VIIRS_SNPP_NRT
-php artisan queue:work database --queue=ember-classification --tries=3 --timeout=300
-```
+- Jadwal aplikasi menjalankan sync FIRMS per jam dengan jendela default dua hari (`NASA_FIRMS_OVERLAP_DAYS=2`). Dua hari adalah periode data yang diminta setiap eksekusi, bukan frekuensi scheduler.
+- OS harus menjalankan `php artisan schedule:run` setiap menit. Lihat `php artisan schedule:list` untuk jadwal yang didefinisikan.
+- Job klasifikasi memakai queue `ember-classification`. Scheduler menjalankan worker singkat setiap menit; untuk pemrosesan manual gunakan `php artisan queue:work --queue=ember-classification --tries=3 --timeout=45 --memory=512`.
+- Titik baru memerlukan sumber raster/crosswalk dan executable Python. Pencocokan administrasi tingkat desa juga memerlukan `village.ndjson` dan script matcher.
+- HSE/HBE merupakan baseline tetap tingkat kelas; FSI Sugeno dihitung dari keduanya. Nilai FSI bukan probabilitas kebakaran.
 
-`--limit=N` limits records before persistence and dispatch. `--dry-run` performs fetch/parse/AOI/duplicate analysis without writes or job dispatch.
-
-## Queue worker
-
-`.env` uses `QUEUE_CONNECTION=database`. Classification jobs are queued on `ember-classification` and retryable. Duplicate insertion is guarded by the service and job uniqueness.
-
-## Job failure behavior
-
-Failures set a terminal-safe status such as `raster_unavailable`, preserve NASA FIRMS fields, and log the exception. The original hotspot is never deleted. Existing terminal classified records are not normally re-enqueued.
-
-## Safe live verification
-
-Dry-run first:
+## Pemeriksaan aman
 
 ```powershell
-php artisan ember:sync-firms --source=VIIRS_SNPP_NRT --dry-run --limit=1
+php artisan schedule:list
+php artisan ember:sync-firms --days=2 --dry-run --limit=1
 ```
 
-One-record live synchronization must be explicitly approved before executing. Do not use this workflow for historical backfill.
+Dry-run mengambil dan memeriksa respons tanpa menulis database atau mengantrekan klasifikasi. Untuk persyaratan file, troubleshooting queue, dan aturan rekonsiliasi statistik, ikuti dokumen end-to-end di atas.

@@ -180,6 +180,7 @@ final class EmberStatisticsService
     {
         $path = storage_path('app/ember/output/nrt_621_collection4_final_verified.csv');
         $candidateData = ['points' => [], 'overlap_by_coordinate' => [], 'overlap_count' => 0];
+        $candidateConfidence = $this->candidateConfidenceLookup();
 
         if (is_file($path) && ($handle = fopen($path, 'r')) !== false) {
             $headers = fgetcsv($handle, escape: '') ?: [];
@@ -219,6 +220,8 @@ final class EmberStatisticsService
                     continue;
                 }
                 $seenCoordinates[$key] = true;
+                $candidateId = trim((string) ($row['hotspot_id'] ?? ''));
+                $confidenceRecord = $candidateConfidence[$candidateId] ?? [];
 
                 $rawClassId = filter_var($row['raw_class_id'] ?? null, FILTER_VALIDATE_INT);
                 $landCoverId = $rawClassId === false ? null : $matcher->mapRawClassId((int) $rawClassId);
@@ -230,6 +233,11 @@ final class EmberStatisticsService
                     'land_cover_id' => $landCoverId,
                     'land_cover' => is_array($class) ? ($class['name'] ?? null) : null,
                     'classification_status' => $landCoverId === null ? 'unmapped_candidate' : 'sampled_candidate',
+                    'candidate_id' => $candidateId,
+                    'confidence' => $confidenceRecord['confidence'] ?? null,
+                    'confidence_date' => $confidenceRecord['acq_date'] ?? null,
+                    'confidence_time' => $confidenceRecord['acq_time'] ?? null,
+                    'confidence_satellite' => $confidenceRecord['satellite'] ?? null,
                     'coincident_with_database' => isset($databaseCoordinates[$key]),
                     'coincident_layer' => $databaseCoordinates[$key] ?? null,
                 ];
@@ -251,6 +259,31 @@ final class EmberStatisticsService
             'candidate_data' => $candidateData,
             'composition' => $this->uniqueSpatialDataset($databaseLocations, $candidateData['points'], $language),
         ];
+    }
+
+    private function candidateConfidenceLookup(): array
+    {
+        $path = storage_path('app/ember/output/nrt_candidate_confidence_enriched.csv');
+        if (! is_file($path) || ($handle = fopen($path, 'r')) === false) {
+            return [];
+        }
+
+        $headers = fgetcsv($handle, escape: '') ?: [];
+        $headers = array_map(fn ($header) => strtolower(trim((string) $header, "\" \t\n\r\0\x0B\xEF\xBB\xBF")), $headers);
+        $records = [];
+        while (($values = fgetcsv($handle, escape: '')) !== false) {
+            if (count($values) !== count($headers)) {
+                continue;
+            }
+            $row = array_combine($headers, $values);
+            $id = trim((string) ($row['hotspot_id'] ?? ''));
+            if ($id !== '' && trim((string) ($row['confidence'] ?? '')) !== '') {
+                $records[$id] = $row;
+            }
+        }
+        fclose($handle);
+
+        return $records;
     }
 
     public function coordinateKey(float $latitude, float $longitude): string
@@ -382,6 +415,16 @@ final class EmberStatisticsService
             $classId = filter_var($candidate['land_cover_id'] ?? null, FILTER_VALIDATE_INT);
             if ($classId !== false && in_array((int) $classId, $approvedIds, true)) {
                 $classCounts[(int) $classId]++;
+                $confidence = trim((string) ($candidate['confidence'] ?? ''));
+                if ($confidence !== '') {
+                    $confidenceKey = $this->confidenceKey($confidence);
+                    $confidenceCounts[$confidenceKey]++;
+                    $classConfidence[(int) $classId][$confidenceKey]++;
+                    $confidenceRecords[] = [
+                        'date' => $candidate['confidence_date'] ?? null,
+                        'confidence_key' => $confidenceKey,
+                    ];
+                }
             } else {
                 $unresolvedPoints[] = [
                     'source' => 'collection4_candidate',
@@ -426,6 +469,8 @@ final class EmberStatisticsService
             ])->all(),
             'confidence_total' => $confidenceTotal,
             'confidence_category_total' => $confidenceCategoryTotal,
+            'confidence_cohort_total' => $uniqueTotal,
+            'confidence_unavailable_total' => max(0, $uniqueTotal - $confidenceCategoryTotal),
             'confidence_unrated_total' => $confidenceCounts['unrated'],
             'confidence_counts' => $confidenceCategoryCounts,
             'confidence_records' => $confidenceRecords,
@@ -491,9 +536,9 @@ final class EmberStatisticsService
         }
 
         return match (strtolower(trim((string) $confidence))) {
-            'high', 'tinggi' => 'high',
-            'nominal', 'medium', 'sedang' => 'nominal',
-            'low', 'rendah' => 'low',
+            'h', 'high', 'tinggi' => 'high',
+            'n', 'nominal', 'medium', 'sedang' => 'nominal',
+            'l', 'low', 'rendah' => 'low',
             default => 'unrated',
         };
     }

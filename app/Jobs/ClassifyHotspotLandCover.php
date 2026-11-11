@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Services\FireSusceptibilityService;
+use App\Services\AdministrativeLocationMatcher;
 use App\Services\MapBiomasSpatialMatcher;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -34,15 +35,11 @@ class ClassifyHotspotLandCover implements ShouldQueue, ShouldBeUnique
 
     public function handle(
         MapBiomasSpatialMatcher $matcher,
-        FireSusceptibilityService $susceptibility
+        FireSusceptibilityService $susceptibility,
+        AdministrativeLocationMatcher $administrativeMatcher
     ): void {
         $hotspot = DB::table('titik_lokasi')->where('id', $this->hotspotId)->first();
         if (! $hotspot) {
-            return;
-        }
-
-        if ((int) ($hotspot->classification_status === 'classified' ? 1 : 0) === 1
-            && $hotspot->land_cover_id !== null) {
             return;
         }
 
@@ -50,6 +47,33 @@ class ClassifyHotspotLandCover implements ShouldQueue, ShouldBeUnique
         $longitude = is_numeric($hotspot->longitude ?? null) ? (float) $hotspot->longitude : null;
         if ($latitude === null || $longitude === null || ! is_finite($latitude) || ! is_finite($longitude)) {
             $this->saveStatus($hotspot->id, 'failed', null, null, 'Missing or invalid latitude/longitude');
+            return;
+        }
+
+        try {
+            $location = $administrativeMatcher->match($latitude, $longitude);
+            if (is_array($location)) {
+                $locationUpdate = array_filter([
+                    'provinsi' => $location['provinsi'] ?? null,
+                    'kabupaten_kota' => $location['kabupaten_kota'] ?? null,
+                    'kecamatan' => $location['kecamatan'] ?? null,
+                    'desa' => $location['desa'] ?? null,
+                ], fn ($value) => is_string($value) && trim($value) !== '');
+                if ($locationUpdate !== []) {
+                    DB::table('titik_lokasi')->where('id', $hotspot->id)->update([
+                        ...$locationUpdate,
+                        'updated_at' => now(),
+                    ]);
+                }
+            }
+        } catch (Throwable $exception) {
+            Log::warning('EMBER administrative hotspot matching failed', [
+                'hotspot_id' => $hotspot->id,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+
+        if ($hotspot->classification_status === 'classified' && $hotspot->land_cover_id !== null) {
             return;
         }
 

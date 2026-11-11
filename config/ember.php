@@ -25,7 +25,7 @@ return [
         'raster_directory' => env('MAPBIOMAS_LAND_COVER_RASTER_DIRECTORY', storage_path('app/ember/source/ember_mapbiomas_collection4')),
         'gdal_locationinfo_executable' => env('GDALLOCATIONINFO_EXECUTABLE', 'gdallocationinfo'),
         'gdal_timeout_seconds' => (int) env('GDALLOCATIONINFO_TIMEOUT_SECONDS', 10),
-        'python_executable' => env('MAPBIOMAS_PYTHON_EXECUTABLE', 'python')s,
+        'python_executable' => env('MAPBIOMAS_PYTHON_EXECUTABLE', 'python'),
     ],
     'model_version' => 'EMBER-HSE-HBE-SUGENO-DRAFT-1.0.0',
     'model_status' => 'experimental',

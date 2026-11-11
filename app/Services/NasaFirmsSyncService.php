@@ -161,7 +161,13 @@ final class NasaFirmsSyncService
                     $currentStatus = $existing && property_exists($existing, 'classification_status')
                         ? $existing->classification_status
                         : null;
-                    if (! $existing || ! in_array($currentStatus, $terminalStatuses, true)) {
+                    $administrativeLocationIncomplete = ! $existing
+                        || blank($existing->kabupaten_kota ?? null)
+                        || blank($existing->kecamatan ?? null)
+                        || blank($existing->desa ?? null);
+                    if (! $existing
+                        || ! in_array($currentStatus, $terminalStatuses, true)
+                        || $administrativeLocationIncomplete) {
                         ClassifyHotspotLandCover::dispatch((int) $hotspotId);
                     }
                 }
