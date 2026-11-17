@@ -36,40 +36,44 @@ const EmberMap = {
     activeLandCover: 'all',
     preserveQueryProvinceOnInitialZoom: false,
 
-    initializeQueryState() {
+    initializeQueryState(serverFilters = {}) {
         const params = new URLSearchParams(window.location.search);
         const yearRange = document.getElementById('map-year-range');
         const years = yearRange?.dataset.yearValues
             ? yearRange.dataset.yearValues.split(',').filter(Boolean)
             : [];
-        const requestedYear = params.get('year');
+        const requestedYear = params.get('year') || (serverFilters.year ? String(serverFilters.year) : null);
 
         this.selectedYear = requestedYear && years.includes(requestedYear)
             ? requestedYear
             : 'all';
 
         const allowedConfidence = ['low', 'nominal', 'high'];
-        if (params.has('confidence')) {
+        const requestedConfidence = params.get('confidence')
+            ?? (Array.isArray(serverFilters.confidence) ? serverFilters.confidence.join(',') : '');
+        if (params.has('confidence') || requestedConfidence !== '') {
             this.activeConfidenceKeys = new Set(
-                params.get('confidence').split(',').filter((key) => allowedConfidence.includes(key)),
+                requestedConfidence.split(',').filter((key) => allowedConfidence.includes(key)),
             );
         }
 
         const allowedFsi = ['very_low', 'low', 'moderate', 'high', 'very_high', 'unrated'];
-        if (params.has('fsi')) {
+        const requestedFsi = params.get('fsi')
+            ?? (Array.isArray(serverFilters.fsi) ? serverFilters.fsi.join(',') : '');
+        if (params.has('fsi') || requestedFsi !== '') {
             this.activeFsiKeys = new Set(
-                params.get('fsi').split(',').filter((key) => allowedFsi.includes(key)),
+                requestedFsi.split(',').filter((key) => allowedFsi.includes(key)),
             );
         }
 
         const landCoverSelect = document.getElementById('map-land-cover-filter');
-        const requestedLandCover = params.get('land_cover');
+        const requestedLandCover = params.get('land_cover') ?? serverFilters.land_cover ?? '';
         this.activeLandCover = requestedLandCover
             && Array.from(landCoverSelect?.options || []).some((option) => option.value === requestedLandCover)
             ? requestedLandCover
             : 'all';
 
-        const requestedProvince = params.get('province');
+        const requestedProvince = params.get('province') ?? serverFilters.province ?? '';
         this.boundarySelection.province = requestedProvince
             && this.locations.some((location) => String(location.provinsi || '').trim().toLocaleLowerCase('id-ID')
                 === requestedProvince.trim().toLocaleLowerCase('id-ID'))
@@ -173,7 +177,7 @@ const EmberMap = {
 
         const locations = this.locations;
         this.language = payload.language === 'en' ? 'en' : 'id';
-        this.initializeQueryState();
+        this.initializeQueryState(payload.filters || {});
 
         this.map = L.map(mapElement, {
             scrollWheelZoom: false,
@@ -660,12 +664,29 @@ const EmberMap = {
         if (!layer) return;
         layer.clearLayers();
         let shown = 0;
+        let classEvidence = {};
+        try {
+            classEvidence = JSON.parse(
+                document.getElementById('map-class-statistics')?.dataset.classEvidence || '{}'
+            );
+        } catch (error) {
+            classEvidence = {};
+        }
         this.candidates.forEach((candidate) => {
             const latitude = Number(candidate.latitude);
             const longitude = Number(candidate.longitude);
             if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
             const status = this.statusFor(candidate.confidence);
             if (!['high', 'nominal', 'low'].includes(status.key) || !this.activeConfidenceKeys.has(status.key)) return;
+            if (this.selectedYear !== 'all'
+                && String(candidate.confidence_date || '').slice(0, 4) !== String(this.selectedYear)) return;
+            if (this.activeLandCover !== 'all'
+                && String(candidate.land_cover || '') !== this.activeLandCover) return;
+            if (this.boundarySelection.province || this.boundarySelection.regency
+                || this.boundarySelection.district || this.boundarySelection.village) return;
+            const classContext = classEvidence[String(candidate.land_cover_id ?? '')];
+            const candidateFsiKey = this.fsiKey(classContext?.fsi_class);
+            if (!this.activeFsiKeys.has(candidateFsiKey)) return;
             if (this.visibleDatabaseCoordinates.has(this.coordinateKey(latitude, longitude))) return;
             const marker = L.circleMarker([latitude, longitude], {
                 radius: 3.5,
@@ -1080,6 +1101,30 @@ const EmberMap = {
             });
         }
 
+        // The statistics page uses the enriched NASA/candidate source as its
+        // authority. Reuse that same cohort for the unfiltered map summary so
+        // the two pages report identical confidence totals. Filtered regional
+        // or thematic views still use the matching map records below.
+        const confidencePanel = document.getElementById('map-confidence-statistics');
+        let authoritativeConfidenceRecords = [];
+        try {
+            authoritativeConfidenceRecords = JSON.parse(
+                confidencePanel?.dataset.authoritativeConfidenceRecords || '[]'
+            );
+        } catch (error) {
+            authoritativeConfidenceRecords = [];
+        }
+        const useAuthoritativeConfidence = !selectedProvinceKey
+            && this.activeConfidenceKeys.size === 3
+            && this.activeFsiKeys.size === 6
+            && this.activeLandCover === 'all';
+        const confidenceRecords = useAuthoritativeConfidence
+            ? authoritativeConfidenceRecords.filter((record) =>
+                this.selectedYear === 'all'
+                || String(record.date || '').slice(0, 4) === String(this.selectedYear)
+            )
+            : null;
+
         /**
          * Hitung jumlah berdasarkan STATUS CONFIDENCE NASA.
          *
@@ -1097,8 +1142,10 @@ const EmberMap = {
             Object.keys(statusDefinitions).map((key) => [key, 0])
         );
 
-        confidenceLocations.forEach((location) => {
-            const statusKey = this.confidenceClass(location.confidence);
+        (confidenceRecords || confidenceLocations).forEach((record) => {
+            const statusKey = confidenceRecords
+                ? record.confidence_key
+                : this.confidenceClass(record.confidence);
 
             if (Object.prototype.hasOwnProperty.call(counts, statusKey)) {
                 counts[statusKey] += 1;
@@ -1203,16 +1250,18 @@ const EmberMap = {
          * mengikuti filter tutupan lahan, FSI,
          * confidence, dan tahun.
          */
-        confidenceLocations.forEach((location) => {
+        (confidenceRecords || confidenceLocations).forEach((record) => {
             const month = Number(
-                String(location.date || '').slice(5, 7)
+                String(record.date || '').slice(5, 7)
             );
 
             if (month < 1 || month > 12) {
                 return;
             }
 
-            const statusKey = this.confidenceClass(location.confidence);
+            const statusKey = confidenceRecords
+                ? record.confidence_key
+                : this.confidenceClass(record.confidence);
 
             if (
                 Object.prototype.hasOwnProperty.call(

@@ -42,7 +42,8 @@ class ContentController extends Controller
                 $location->collection4_candidate = $candidateData['overlap_by_coordinate'][$key];
             }
         }
-        $mapDashboard = $statistics->dashboard($locations, $this->dashboardFilters($request), $language);
+        $mapFilters = $this->dashboardFilters($request);
+        $mapDashboard = $statistics->dashboard($locations, $mapFilters, $language);
 
         $boundaryLayers = DB::table('geojson_layers')
             ->where('is_active', true)
@@ -61,6 +62,7 @@ class ContentController extends Controller
             'locations' => $locations,
             'boundaryLayers' => $boundaryLayers,
             'mapDashboard' => $mapDashboard,
+            'mapFilters' => $mapFilters,
             'spatialDashboard' => $spatialDataset['composition'],
             'language' => $language,
             'latestSync' => DB::table('firms_sync_runs')->orderByDesc('created_at')->first(),
@@ -311,6 +313,14 @@ class ContentController extends Controller
         $statistics = app(\App\Services\EmberStatisticsService::class);
         $dashboard = $statistics
             ->dashboard($locations, $dashboardFilters, $this->language($request));
+        $allConfidenceFilters = ['high', 'nominal', 'low', 'unrated'];
+        $allFsiFilters = ['very_low', 'low', 'moderate', 'high', 'very_high', 'unrated'];
+        $filtersActive = ! empty($dashboardFilters['year'])
+            || $dashboardFilters['province'] !== ''
+            || $dashboardFilters['land_cover'] !== ''
+            || ($dashboardFilters['confidence'] !== [] && $dashboardFilters['confidence'] !== $allConfidenceFilters)
+            || ($dashboardFilters['fsi'] !== [] && $dashboardFilters['fsi'] !== $allFsiFilters);
+        $filteredLocations = $statistics->filterLocations($locations, $dashboardFilters);
         $spatialDashboard = $spatialDataset['composition'];
         $databaseTotal = DB::table('titik_lokasi')->count();
         $historicalTotal = DB::table('titik_lokasi')
@@ -334,14 +344,59 @@ class ContentController extends Controller
             'collection4_candidate_additional' => count($candidateData['points']) - $candidateData['overlap_count'],
             'unique_spatial_total' => $spatialDashboard['total'],
         ];
+        $summaryConfidenceCounts = $filtersActive
+            ? collect($dashboard['confidence'])->map(fn (array $status) => (int) $status['count'])->all()
+            : $spatialDashboard['confidence_counts'];
+        $summaryConfidenceCategoryTotal = array_sum(array_intersect_key(
+            $summaryConfidenceCounts,
+            array_flip(['high', 'nominal', 'low'])
+        ));
         $summary = [
-            'total' => $spatialDashboard['total'],
-            'confidence_total' => $spatialDashboard['confidence_total'],
-            'confidence_category_total' => $spatialDashboard['confidence_category_total'],
-            ...$spatialDashboard['confidence_counts'],
+            'total' => $filtersActive ? $dashboard['total'] : $spatialDashboard['total'],
+            'confidence_total' => $filtersActive ? $summaryConfidenceCategoryTotal : $spatialDashboard['confidence_total'],
+            'confidence_category_total' => $filtersActive ? $summaryConfidenceCategoryTotal : $spatialDashboard['confidence_category_total'],
+            ...$summaryConfidenceCounts,
         ];
 
-        $yearlyStatistics = collect($spatialDashboard['confidence_records'])
+        $statisticsOverview = $filtersActive
+            ? [
+                'total' => $dashboard['total'],
+                'mapped_total' => $dashboard['mapped_total'],
+                'unclassified_total' => max(0, $dashboard['total'] - $dashboard['mapped_total']),
+                'confidence_cohort_total' => $dashboard['total'],
+                'confidence_counts' => collect($dashboard['confidence'])
+                    ->only(['high', 'nominal', 'low'])
+                    ->map(fn (array $status) => (int) $status['count'])
+                    ->all(),
+                'confidence_unavailable_total' => (int) ($dashboard['confidence']['unrated']['count'] ?? 0),
+            ]
+            : [
+                'total' => $spatialDashboard['total'],
+                'mapped_total' => $spatialDashboard['mapped_total'],
+                'unclassified_total' => $spatialDashboard['unclassified_total'],
+                'confidence_cohort_total' => $spatialDashboard['confidence_cohort_total'],
+                'confidence_counts' => $spatialDashboard['confidence_counts'],
+                'confidence_unavailable_total' => $spatialDashboard['confidence_unavailable_total'],
+            ];
+        $statisticsClasses = $filtersActive
+            ? $dashboard['classes']->map(fn (array $class) => [
+                ...$class,
+                'share' => $statisticsOverview['total'] > 0
+                    ? round(($class['count'] / $statisticsOverview['total']) * 100, 2)
+                    : 0,
+            ])->values()
+            : $spatialDashboard['classes'];
+
+        $yearlyRecords = $filtersActive
+            ? $filteredLocations
+                ->filter(fn (object $location) => ($location->data_source ?? null) === 'NASA FIRMS')
+                ->map(fn (object $location) => [
+                    'date' => $location->date ?? null,
+                    'confidence_key' => $statistics->confidenceKey($location->confidence ?? null),
+                ])
+                ->all()
+            : $spatialDashboard['confidence_records'];
+        $yearlyStatistics = collect($yearlyRecords)
             ->map(function (array $record) {
                 $timestamp = strtotime((string) ($record['date'] ?? ''));
                 if ($timestamp === false) {
@@ -378,7 +433,8 @@ class ContentController extends Controller
 
         $years = $yearlyStatistics->pluck('year')->sort()->values();
         $unknownProvince = $this->language($request) === 'en' ? 'Unknown province' : 'Provinsi belum diketahui';
-        $provinceStatistics = $locations
+        $provinceLocations = $filtersActive ? $filteredLocations : $locations;
+        $provinceStatistics = $provinceLocations
             ->groupBy(fn (object $location) => filled($location->provinsi) ? trim($location->provinsi) : $unknownProvince)
             ->map(function ($provinceLocations, string $province) use ($years) {
                 return [
@@ -404,6 +460,9 @@ class ContentController extends Controller
             'language' => $this->language($request),
             'dashboard' => $dashboard,
             'spatialDashboard' => $spatialDashboard,
+            'statisticsOverview' => $statisticsOverview,
+            'statisticsClasses' => $statisticsClasses,
+            'filtersActive' => $filtersActive,
             'spatialTotal' => $spatialDashboard['total'],
             'recordBreakdown' => $recordBreakdown,
             'nrtTotal' => $nrtTotal,

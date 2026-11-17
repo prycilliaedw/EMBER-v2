@@ -33,16 +33,16 @@
             'unavailable' => ['label' => $language === 'en' ? 'No NASA value' : 'Tidak tersedia', 'hex' => '#94a3b8'],
         ];
         $confidenceChartCounts = [
-            ...$spatialDashboard['confidence_counts'],
-            'unavailable' => $spatialDashboard['confidence_unavailable_total'],
+            ...$statisticsOverview['confidence_counts'],
+            'unavailable' => $statisticsOverview['confidence_unavailable_total'],
         ];
-        $dashboardClasses = $spatialDashboard['classes']->sortBy('id')->values();
-        $unresolvedDatabasePoint = collect($spatialDashboard['unresolved_points'])->first(fn (array $point) => isset($point['id']));
+        $dashboardClasses = $statisticsClasses->sortBy('id')->values();
+        $unresolvedDatabasePoint = $filtersActive ? null : collect($spatialDashboard['unresolved_points'])->first(fn (array $point) => isset($point['id']));
         $confidenceStops = [];
         $confidenceOffset = 0;
         foreach ($confidenceChartStatuses as $key => $status) {
-            $share = $spatialDashboard['confidence_cohort_total'] > 0
-                ? ($confidenceChartCounts[$key] / $spatialDashboard['confidence_cohort_total']) * 100
+            $share = $statisticsOverview['confidence_cohort_total'] > 0
+                ? ($confidenceChartCounts[$key] / $statisticsOverview['confidence_cohort_total']) * 100
                 : 0;
             $confidenceStops[] = $status['hex'].' '.$confidenceOffset.'% '.($confidenceOffset + $share).'%';
             $confidenceOffset += $share;
@@ -59,7 +59,7 @@
             }
             $classOffset += $share;
         }
-        if ($spatialDashboard['unclassified_total'] > 0 && $spatialDashboard['total'] > 0) {
+        if ($statisticsOverview['unclassified_total'] > 0 && $statisticsOverview['total'] > 0) {
             $classStops[] = '#cbd5e1 '.$classOffset.'% 100%';
         }
         $classDonut = $classOffset > 0 && $classStops !== []
@@ -320,7 +320,7 @@
             <div class="mt-8 rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500">{{ $language === 'en' ? 'No dated location data is available yet.' : 'Belum ada data lokasi yang memiliki tanggal.' }}</div>
         @endif
     </section>
-        <section id="ember-statistics-dashboard" class="mx-auto max-w-7xl px-4 pb-4 sm:px-6 lg:px-8" data-hotspot-total="{{ $spatialDashboard['total'] }}" data-classified-total="{{ $spatialDashboard['mapped_total'] }}" data-unclassified-total="{{ $spatialDashboard['unclassified_total'] }}" data-confidence-total="{{ $spatialDashboard['confidence_total'] }}" data-confidence-category-total="{{ $spatialDashboard['confidence_category_total'] }}" data-confidence-cohort-total="{{ $spatialDashboard['confidence_cohort_total'] }}" data-confidence-unavailable-total="{{ $spatialDashboard['confidence_unavailable_total'] }}" data-stale-fsi-total="{{ $dashboard['stale_persisted_fsi_count'] }}">
+        <section id="ember-statistics-dashboard" class="mx-auto max-w-7xl px-4 pb-4 sm:px-6 lg:px-8" data-hotspot-total="{{ $statisticsOverview['total'] }}" data-classified-total="{{ $statisticsOverview['mapped_total'] }}" data-unclassified-total="{{ $statisticsOverview['unclassified_total'] }}" data-confidence-total="{{ $summary['confidence_total'] }}" data-confidence-category-total="{{ $summary['confidence_category_total'] }}" data-confidence-cohort-total="{{ $statisticsOverview['confidence_cohort_total'] }}" data-confidence-unavailable-total="{{ $statisticsOverview['confidence_unavailable_total'] }}" data-stale-fsi-total="{{ $dashboard['stale_persisted_fsi_count'] }}">
         <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
                 <p class="text-[10px] font-black uppercase tracking-[0.18em] text-red-600">{{ $language === 'en' ? 'Interactive analytical view' : 'Tampilan analitik interaktif' }}</p>
@@ -406,11 +406,11 @@
         <div class="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <article class="rounded-2xl bg-slate-950 p-4 text-white">
                 <p class="text-[9px] font-black uppercase tracking-wider text-slate-400">{{ $language === 'en' ? 'Unique spatial points' : 'Titik spasial unik' }}</p>
-                <p class="mt-2 text-3xl font-black">{{ number_format($spatialDashboard['total']) }}</p>
+                <p class="mt-2 text-3xl font-black">{{ number_format($statisticsOverview['total']) }}</p>
             </article>
             <article class="rounded-2xl border border-slate-200 bg-white p-4">
                 <p class="text-[9px] font-black uppercase tracking-wider text-slate-500">{{ $language === 'en' ? 'Class-assigned unique points' : 'Titik unik dengan kelas' }}</p>
-                <p class="mt-2 text-3xl font-black text-slate-900">{{ number_format($spatialDashboard['mapped_total']) }}</p>
+                <p class="mt-2 text-3xl font-black text-slate-900">{{ number_format($statisticsOverview['mapped_total']) }}</p>
             </article>
             <article class="rounded-2xl border border-slate-200 bg-white p-4">
                 <p class="text-[9px] font-black uppercase tracking-wider text-slate-500">{{ $language === 'en' ? 'Classes represented' : 'Kelas yang ditampilkan' }}</p>
@@ -421,19 +421,19 @@
         <div class="grid gap-5 xl:grid-cols-2">
             <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="stats-confidence-title">
                 <h3 id="stats-confidence-title" class="text-lg font-black text-slate-950">{{ $language === 'en' ? 'A. NASA Confidence Distribution' : 'A. Distribusi Confidence NASA' }}</h3>
-                <p class="mt-1 text-xs text-slate-500">{{ $language === 'en' ? 'All '.$spatialDashboard['confidence_cohort_total'].' unique spatial points are counted. '.$spatialDashboard['confidence_category_total'].' have an actual High, Nominal, or Low NASA value; '.$spatialDashboard['confidence_unavailable_total'].' have no classifiable NASA Confidence value in the source data.' : 'Seluruh '.$spatialDashboard['confidence_cohort_total'].' titik spasial unik dihitung. Sebanyak '.$spatialDashboard['confidence_category_total'].' memiliki nilai NASA High, Nominal, atau Low; '.$spatialDashboard['confidence_unavailable_total'].' belum memiliki nilai Confidence NASA yang dapat dikategorikan pada sumber data.' }}</p>
+                <p class="mt-1 text-xs text-slate-500">{{ $language === 'en' ? 'The selected result contains '.$statisticsOverview['confidence_cohort_total'].' points. '.$summary['confidence_category_total'].' have a categorized NASA confidence value; '.$statisticsOverview['confidence_unavailable_total'].' have no classifiable value.' : 'Hasil pilihan memuat '.$statisticsOverview['confidence_cohort_total'].' titik. Sebanyak '.$summary['confidence_category_total'].' memiliki nilai confidence NASA berkategori; '.$statisticsOverview['confidence_unavailable_total'].' belum memiliki nilai yang dapat dikategorikan.' }}</p>
                 <div class="mt-5 grid items-center gap-5 sm:grid-cols-[160px_1fr]">
-                    <div class="relative mx-auto size-40 rounded-full" style="background: {{ $confidenceDonut }}" role="img" aria-label="{{ $language === 'en' ? 'NASA confidence coverage for ' : 'Cakupan confidence NASA untuk ' }}{{ number_format($spatialDashboard['confidence_cohort_total']) }} {{ $language === 'en' ? 'unique spatial points' : 'titik spasial unik' }}">
+                    <div class="relative mx-auto size-40 rounded-full" style="background: {{ $confidenceDonut }}" role="img" aria-label="{{ $language === 'en' ? 'NASA confidence coverage for ' : 'Cakupan confidence NASA untuk ' }}{{ number_format($statisticsOverview['confidence_cohort_total']) }} {{ $language === 'en' ? 'unique spatial points' : 'titik spasial unik' }}">
                         <div class="absolute inset-[25%] flex flex-col items-center justify-center rounded-full bg-white text-center shadow-inner">
-                            <strong class="text-2xl font-black">{{ number_format($spatialDashboard['confidence_cohort_total']) }}</strong>
+                            <strong class="text-2xl font-black">{{ number_format($statisticsOverview['confidence_cohort_total']) }}</strong>
                             <span class="text-[8px] font-bold uppercase text-slate-500">{{ $language === 'en' ? 'spatial points' : 'titik spasial' }}</span>
                         </div>
                     </div>
                     <div class="space-y-2">
                         @foreach ($confidenceChartStatuses as $key => $status)
                             @php($count = $confidenceChartCounts[$key])
-                            @php($share = $spatialDashboard['confidence_cohort_total'] > 0 ? ($count / $spatialDashboard['confidence_cohort_total']) * 100 : 0)
-                            <div class="flex items-center gap-2 text-xs" title="{{ $status['label'] }}: {{ number_format($count) }} / {{ number_format($spatialDashboard['confidence_cohort_total']) }} ({{ number_format($share, 1) }}%)">
+                            @php($share = $statisticsOverview['confidence_cohort_total'] > 0 ? ($count / $statisticsOverview['confidence_cohort_total']) * 100 : 0)
+                            <div class="flex items-center gap-2 text-xs" title="{{ $status['label'] }}: {{ number_format($count) }} / {{ number_format($statisticsOverview['confidence_cohort_total']) }} ({{ number_format($share, 1) }}%)">
                                 <span class="size-2.5 rounded-full" style="background: {{ $status['hex'] }}"></span>
                                 <span class="flex-1 font-semibold text-slate-700">{{ $status['label'] }}</span>
                                 <strong>{{ number_format($count) }}</strong>
@@ -446,17 +446,17 @@
 
             <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="stats-class-title">
                 <h3 id="stats-class-title" class="text-lg font-black text-slate-950">{{ $language === 'en' ? 'B. Hotspot Distribution by Land-Cover Class' : 'B. Distribusi Hotspot per Kelas Tutupan Lahan' }}</h3>
-                <p class="mt-1 text-xs text-slate-500">{{ $language === 'en' ? 'All 13 approved classes; percentages use the full unique spatial total of '.number_format($spatialDashboard['total']).'. Candidate classes use the authoritative crosswalk.' : 'Seluruh 13 kelas yang disetujui; persentase memakai total spasial unik '.number_format($spatialDashboard['total']).'. Kelas kandidat memakai crosswalk otoritatif.' }}</p>
+                <p class="mt-1 text-xs text-slate-500">{{ $language === 'en' ? 'Class counts use the selected result of '.number_format($statisticsOverview['total']).' points.' : 'Jumlah kelas memakai hasil filter sebanyak '.number_format($statisticsOverview['total']).' titik.' }}</p>
                 <div class="mt-5 grid items-center gap-5 sm:grid-cols-[160px_1fr]">
-                    <div class="relative mx-auto size-40 rounded-full" style="background: {{ $classDonut }}" role="img" aria-label="{{ $language === 'en' ? 'Distribution across all 13 land-cover classes; unique spatial denominator ' : 'Distribusi seluruh 13 kelas tutupan lahan; penyebut spasial unik ' }}{{ number_format($spatialDashboard['total']) }}">
+                    <div class="relative mx-auto size-40 rounded-full" style="background: {{ $classDonut }}" role="img" aria-label="{{ $language === 'en' ? 'Distribution across all 13 land-cover classes; selected point total ' : 'Distribusi 13 kelas tutupan lahan; total titik terpilih ' }}{{ number_format($statisticsOverview['total']) }}">
                         <div class="absolute inset-[25%] flex flex-col items-center justify-center rounded-full bg-white text-center shadow-inner">
-                            <strong class="text-2xl font-black">{{ number_format($spatialDashboard['total']) }}</strong>
+                            <strong class="text-2xl font-black">{{ number_format($statisticsOverview['total']) }}</strong>
                             <span class="text-[8px] font-bold uppercase text-slate-500">{{ $language === 'en' ? 'unique points' : 'titik unik' }}</span>
                         </div>
                     </div>
                     <div class="max-h-48 space-y-1 overflow-y-auto pr-1">
                         @foreach ($dashboardClasses as $class)
-                            <div class="flex items-center gap-2 text-[10px]" title="{{ $class['display_name'] }}: {{ number_format($class['count']) }} / {{ number_format($spatialDashboard['total']) }} ({{ number_format($class['share'], 2) }}%)">
+                            <div class="flex items-center gap-2 text-[10px]" title="{{ $class['display_name'] }}: {{ number_format($class['count']) }} / {{ number_format($statisticsOverview['total']) }} ({{ number_format($class['share'], 2) }}%)">
                                 <span class="size-2 shrink-0 rounded-full" style="background: {{ $class['color'] }}"></span>
                                 <span class="min-w-0 flex-1 truncate font-semibold text-slate-700">{{ $class['display_name'] }}</span>
                                 <strong>{{ number_format($class['count']) }}</strong>
@@ -466,7 +466,7 @@
                     </div>
                 </div>
                 <p class="mt-3 text-[10px] leading-4 text-slate-500">
-                    @if ($spatialDashboard['unclassified_total'] > 0)
+                    @if ($statisticsOverview['unclassified_total'] > 0)
                         {{ $language === 'en' ? 'One point is excluded from the 13 class counts because its legacy class assignment is unverified' : 'Satu titik tidak masuk dalam hitungan 13 kelas karena penetapan kelas record lamanya belum terverifikasi' }}
                         @if ($unresolvedDatabasePoint)
                             {{ $language === 'en' ? ': database ID '.$unresolvedDatabasePoint['id'].' at '.$unresolvedDatabasePoint['latitude'].', '.$unresolvedDatabasePoint['longitude'].'. ' : ': ID database '.$unresolvedDatabasePoint['id'].' pada '.$unresolvedDatabasePoint['latitude'].', '.$unresolvedDatabasePoint['longitude'].'. ' }}

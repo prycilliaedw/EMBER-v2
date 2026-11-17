@@ -45,7 +45,7 @@
                 <span id="map-statistics-period" class="bg-slate-100 px-2 py-1 text-[9px] font-black text-slate-500">{{ $language === 'en' ? 'All years' : 'Semua tahun' }}</span>
             </div>
 
-            <section id="map-confidence-statistics" class="border-b border-slate-200 py-3">
+            <section id="map-confidence-statistics" data-authoritative-confidence-records="{{ json_encode($spatialDashboard['confidence_records'], JSON_HEX_APOS | JSON_HEX_QUOT) }}" class="border-b border-slate-200 py-3">
                 <h3 class="text-[9px] font-black uppercase tracking-[0.16em] text-red-700">{{ $language === 'en' ? '1. NASA confidence distribution' : '1. Distribusi confidence NASA' }}</h3>
                 <p class="mt-1 text-[9px] leading-4 text-slate-500">{{ $language === 'en' ? 'High, Nominal, and Low from filtered historical/NRT NASA records only. The center count is the classifiable Confidence denominator; candidate samples, legacy points, and the non-category NASA value are excluded.' : 'High, Nominal, dan Low hanya dari record NASA historis/NRT terfilter. Angka tengah adalah penyebut Confidence yang dapat dikategorikan; sampel kandidat, titik lama, dan nilai NASA di luar kategori dikecualikan.' }}</p>
             <div class="grid grid-cols-[112px_1fr] items-center gap-4 pt-3">
@@ -331,7 +331,7 @@
                     </a>
                 </div>
             </aside>
-            <script id="ember-map-data" type="application/json">{!! json_encode(['language' => $language, 'locations' => $locations, 'candidates' => $collection4Candidates, 'boundaryLayers' => $boundaryLayers], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
+            <script id="ember-map-data" type="application/json">{!! json_encode(['language' => $language, 'locations' => $locations, 'candidates' => $collection4Candidates, 'boundaryLayers' => $boundaryLayers, 'filters' => $mapFilters], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) !!}</script>
         </div>
     </section>
 @endsection
